@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pymupdf
 
+SECTION_START = re.compile(
+    r"(?i)^(what is this product|what are the risks|what happens if|what are the costs|"
+    r"how long should i hold|how can i complain|other relevant information)"
+)
 ISIN_CANDIDATE = re.compile(r"\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b")
 
 
@@ -63,12 +67,30 @@ def guess_product_name(first_page: str, fallback: str) -> str:
     return fallback
 
 
+def page_text(page) -> str:
+    """Page text in reading order that respects KID section headings.
+
+    PDF stream order is not visual order: in two-column layouts (e.g. Vanguard) a
+    heading can come AFTER the text that sits below it. We keep the stream order but
+    stably re-sort blocks by 'how many section headings are above me on the page'.
+    """
+    blocks = [b for b in page.get_text("blocks") if b[6] == 0 and b[4].strip()]
+    heading_ys = [b[1] for b in blocks if SECTION_START.match(b[4].strip())]
+
+    def rank(block):
+        below = sum(1 for y in heading_ys if y <= block[1] + 2)
+        is_heading = SECTION_START.match(block[4].strip()) is not None
+        return (below, 0 if is_heading else 1)  # heading first, then its content in stream order
+
+    return "".join(b[4] for b in sorted(blocks, key=rank))  # sorted() is stable
+
+
 def parse_pdf(path: Path) -> ParsedDoc:
     pages = []
     with pymupdf.open(path) as pdf:
         for number, page in enumerate(pdf, start=1):
             # NFKC turns non-breaking spaces and ligatures into plain characters.
-            text = unicodedata.normalize("NFKC", page.get_text("text"))
+            text = unicodedata.normalize("NFKC", page_text(page))
             pages.append(ParsedPage(number=number, text=text))
     full_text = "\n".join(p.text for p in pages)
     return ParsedDoc(
