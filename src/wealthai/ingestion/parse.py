@@ -45,6 +45,7 @@ def find_isin(text: str) -> str | None:
 
 def _clean_product_line(line: str) -> str:
     """'iShares X UCITS ETF (the "Fund"), USD Accu (the "Share Class"), ISIN: ...' -> 'iShares X UCITS ETF USD Accu'."""
+    line = re.sub(r"(?i)^product\s*:\s*", "", line)  # some issuers repeat the label
     fund = re.split(r"\s*\((?:the|\u201c|\")", line, maxsplit=1)[0].strip(" ,")
     share_class = re.search(r"\),\s*(.+?)\s*\(the\s*[\u201c\"]Share Class", line)
     return f"{fund} {share_class.group(1)}" if share_class else fund
