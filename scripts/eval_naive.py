@@ -18,7 +18,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 from wealthai.rag.naive import answer_question  # noqa: E402
 
 GOLDEN = ROOT / "data" / "golden" / "golden_set.jsonl"
-CACHE = ROOT / "data" / "eval" / "naive_answers.jsonl"
+MODE = sys.argv[sys.argv.index("--mode") + 1] if "--mode" in sys.argv else "dense"
+CACHE = ROOT / "data" / "eval" / ("naive_answers.jsonl" if MODE == "dense" else f"answers_{MODE}.jsonl")
 PAUSE_SECONDS = 5  # stay under the free-tier requests-per-minute limit
 
 golden = [json.loads(line) for line in GOLDEN.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -36,7 +37,7 @@ for item in golden:
     if item["id"] in cache:
         continue
     t0 = time.perf_counter()
-    result = answer_question(item["question"])
+    result = answer_question(item["question"], mode=MODE)
     result["id"] = item["id"]
     cache[item["id"]] = result
     with CACHE.open("a", encoding="utf-8") as f:

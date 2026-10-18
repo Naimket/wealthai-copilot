@@ -1,8 +1,8 @@
-﻿"""Naive RAG baseline: dense top-k -> prompt -> grounded answer with citations."""
+﻿"""RAG answer step: retrieve top-k (any mode, see retrieval.py) -> prompt -> grounded answer with citations."""
 from pydantic import BaseModel, Field
 
-from wealthai.ingestion.index import search
 from wealthai.llm import generate
+from wealthai.retrieval import retrieve
 
 PROMPT = """You are an assistant for wealth advisors. Answer the question using ONLY the numbered
 context passages below (excerpts of fund Key Information Documents).
@@ -27,9 +27,9 @@ class RagAnswer(BaseModel):
     citations: list[int] = Field(description="Numbers of the context passages used")
 
 
-def answer_question(question: str, k: int = 5) -> dict:
-    hits = search(question, k=k)
-    contexts = [h.payload["text"] for h in hits]
+def answer_question(question: str, k: int = 5, mode: str = "hybrid_filter_rerank") -> dict:
+    hits = retrieve(question, k=k, mode=mode)
+    contexts = [h["text"] for h in hits]
     context = "\n\n".join(f"[{i}] {text}" for i, text in enumerate(contexts, start=1))
     result = generate(PROMPT.format(context=context, question=question), schema=RagAnswer)
     return {
@@ -38,6 +38,7 @@ def answer_question(question: str, k: int = 5) -> dict:
         "answerable": result.answerable,
         "citations": result.citations,
         "contexts": contexts,
-        "sources": [h.payload["source"] for h in hits],
-        "sections": [h.payload["section"] for h in hits],
+        "sources": [h["source"] for h in hits],
+        "sections": [h["section"] for h in hits],
+        "mode": mode,
     }
