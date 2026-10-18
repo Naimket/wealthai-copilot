@@ -24,9 +24,11 @@ class FakeLLM:
     def __init__(self, **by_schema):
         self.queues = {name: list(items) for name, items in by_schema.items()}
         self.calls = []
+        self.prompts = []
 
     def __call__(self, prompt, schema=None, **kwargs):
         self.calls.append(schema.__name__)
+        self.prompts.append((schema.__name__, prompt))
         queue = self.queues[schema.__name__]
         return queue.pop(0) if len(queue) > 1 else queue[0]
 
@@ -202,3 +204,26 @@ def test_unanswerable_compose_skips_verification(setup):
                   FinalAnswer=[FA("The data cannot answer this.", answerable=False)])
     out = multi.run_multi("What is the meaning of life?")
     assert not out["answerable"] and llm.count("Verification") == 0
+
+
+# --- the redactor and the verifier must see WHAT the query selected (regression: a bare "1" is not "clients in Geneva") ---
+
+def test_compose_and_verify_prompts_include_the_sql_that_produced_the_rows(setup):
+    install, _ = setup
+    sql = "SELECT COUNT(*) AS n FROM clients WHERE city = 'Geneva'"
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=sql)],
+                  FinalAnswer=[FA("1 client lives in Geneva.")], Verification=[V(True)])
+    multi.run_multi("How many clients do we have in Geneva?")
+    prompts = dict(llm.prompts)
+    assert sql in prompts["FinalAnswer"] and sql in prompts["Verification"]
+
+
+def test_sql_prompt_states_the_rounding_limit_and_missing_columns_rules(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("10 clients.")], Verification=[V(True)])
+    multi.run_multi("How many clients do we have?")
+    sql_prompt = dict(llm.prompts)["SqlQuery"]
+    assert "never round counts or ages" in sql_prompt
+    assert "only when the question asks for a top-N" in sql_prompt
+    assert "NO cost, fee or risk columns" in sql_prompt

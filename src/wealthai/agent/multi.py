@@ -60,8 +60,10 @@ SQL_PROMPT = """Write ONE SQLite SELECT query that answers the question.
 {schema}
 Rules:
 - Match clients by name with: lower(clients.name) LIKE lower('%name as written%').
-- Portfolio value = SUM(holdings.market_value_chf). Round money with ROUND(x, 0). Use shares of a total when asked for allocations.
+- Portfolio value = SUM(holdings.market_value_chf). Round CHF amounts to 0 decimals and averages and percentages to 1 decimal; never round counts or ages. Use shares of a total when asked for allocations.
 - Return only the columns needed, with readable aliases. End with LIMIT 50 unless you aggregate to one row.
+- Use LIMIT 1 or another small LIMIT only when the question asks for a top-N or a single extreme (largest, oldest, ...).
+- The database has NO cost, fee or risk columns: those facts exist only in the KIDs. Never invent a column. If the question needs KID facts to choose instruments, return the clients and the instruments they hold (name, isin, kid_source).
 - If the question also needs KID facts about the instruments, include instruments.name, instruments.isin and instruments.kid_source in the result.
 - Do not answer the question; only write the query.
 {feedback}
@@ -83,6 +85,9 @@ COMPOSE_PROMPT = """You are an assistant for wealth advisors. Answer the questio
 DATABASE RESULT (fictional client data, amounts in CHF):
 {table}
 
+SQL THAT PRODUCED IT (its WHERE, GROUP BY and LIMIT define what each number or row refers to):
+{sql}
+
 KID ANSWER (from the fund documents):
 {kid}
 
@@ -93,18 +98,25 @@ Rules:
 - If the KID answer says the documents lack something, say so instead of filling the gap.
 - Do not give investment advice or recommendations. Be concise and name the client and fund each figure belongs to.
 - Write amounts as CHF with thousands separators (for example CHF 1,494,694).
+- Describe each figure by what the query selected: a count produced with WHERE city = 'Geneva' is the number of clients in Geneva, even if the result table shows only the number.
+- If the question asks for a ranking or an extreme (lowest, highest, cheapest, most, best) and the evidence does not directly establish it, say that the available data does not allow that conclusion. Never answer about a different subset than the one asked (for example a single row picked by LIMIT 1).
 - Set answerable=false only if the evidence cannot answer the question.
 {feedback}
 Question: {question}"""
 
 VERIFY_PROMPT = """Check the ANSWER against the EVIDENCE. supported=true only if every number, name and claim in the answer
-appears in, or follows directly from, the evidence (re-do any sum, share or ranking yourself).
+appears in, or follows directly from, the evidence (re-do any sum, share or ranking yourself). The SQL shows what
+each number or row refers to. Also set supported=false if the answer addresses a different subset or question than
+the one asked (for example one LIMIT 1 row presented as the answer to a ranking question).
 List any unsupported claim in `unsupported`.
 
 Question: {question}
 
 DATABASE RESULT (fictional client data; all amounts are in CHF):
 {table}
+
+SQL THAT PRODUCED IT:
+{sql}
 
 KID ANSWER:
 {kid}
@@ -238,7 +250,8 @@ def compose(state: State) -> dict:
     feedback = ""
     if state.get("unsupported"):
         feedback = f"Your previous draft had unsupported claims: {state['unsupported']}. Remove them; use only the evidence."
-    prompt = COMPOSE_PROMPT.format(table=state["table"], kid=_kid_text(state), question=state["question"], feedback=feedback)
+    prompt = COMPOSE_PROMPT.format(table=state["table"], sql=state.get("sql", ""), kid=_kid_text(state),
+                                   question=state["question"], feedback=feedback)
     out = generate(prompt, schema=FinalAnswer)
     drafts = state.get("drafts", 0) + 1
     return {"answer": out.answer, "answerable": out.answerable, "drafts": drafts,
@@ -246,8 +259,8 @@ def compose(state: State) -> dict:
 
 
 def verify_final(state: State) -> dict:
-    prompt = VERIFY_PROMPT.format(question=state["question"], table=state["table"], kid=_kid_text(state),
-                                  passages=_passages(state), answer=state["answer"])
+    prompt = VERIFY_PROMPT.format(question=state["question"], table=state["table"], sql=state.get("sql", ""),
+                                  kid=_kid_text(state), passages=_passages(state), answer=state["answer"])
     out = generate(prompt, schema=Verification)
     return {"supported": out.supported, "unsupported": out.unsupported,
             "trace": [f"verify_final supported={out.supported} {out.unsupported!r}"]}
