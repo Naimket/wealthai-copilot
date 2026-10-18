@@ -53,3 +53,29 @@ chunks of only one of them.
   Final numbers will be reported over several runs.
 - Remaining known weakness: vocabulary gap in generation ("TER" is not a term the KIDs use). Planned fix:
   query rewriting in the LangGraph pipeline.
+
+## Phase 5 - LangGraph agent (55 dev questions, Gemini flash-lite)
+
+Graph: guard (advice refusal, rule-based) -> rewrite -> retrieve (hybrid + per-fund + rerank) -> grade
+(retry once with feedback, else abstain) -> generate -> verify (regenerate once, else abstain).
+
+| System | Factual | Comparative | Hard | Unanswerable / traps | LLM calls per question | Latency per question |
+|---|---|---|---|---|---|---|
+| Single-pass, dense (Phase 3) | 100% | 75% | 58% | 12/12 | 1 | ~2 s |
+| Single-pass, hybrid + per-fund + rerank | 100% | 100% | 100% | 12/12 | 1 | ~2 s |
+| Agent (first run) | 100% | 100% | 95% (18/19) | 12/12 | ~4 | ~17 s |
+| Agent (after fixing the grading prompt for loosely named funds) | 100% | 100% | 100% | 12/12 | ~4 | ~17 s |
+
+Agent behaviour over the 55 questions: 1 refused as advice request (0 LLM calls), 11 retried retrieval and
+abstained (all questions with no answer in the KIDs, no false abstentions after the fix), 0 regenerations.
+
+### Findings
+- On this dev set the agent ties the single-pass pipeline with ~4x the LLM calls and ~8x the latency.
+  The grade node works as an "is this in the documents?" detector (11/11 correct abstentions).
+- The verify node never fired. Not evidence that it works: it needs a test with deliberately wrong answers.
+- The TER case ("TER" is not a KID term) was fixed by query rewriting plus a terminology glossary in the
+  generator. That glossary can also be given to the single-pass pipeline; the fair comparison belongs in the
+  blind test set.
+- A grader prompt that was too strict made the agent abstain on an ambiguous question ("the MSCI World ETF")
+  although both matching funds were retrieved. Fixed in the prompt; found only because the agent's
+  decision trace is logged.
