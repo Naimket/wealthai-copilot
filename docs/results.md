@@ -1,4 +1,4 @@
-﻿# Results log
+# Results log
 
 ## Phase 3 - naive RAG baseline (dense top-5 + Gemini flash-lite, 55 questions)
 
@@ -79,3 +79,54 @@ abstained (all questions with no answer in the KIDs, no false abstentions after 
 - A grader prompt that was too strict made the agent abstain on an ambiguous question ("the MSCI World ETF")
   although both matching funds were retrieved. Fixed in the prompt; found only because the agent's
   decision trace is logged.
+
+## Phase 6 - multi-source router (40 questions, Gemini 3.1 Flash Lite)
+
+Set: `data/golden/router_set.jsonl`. Ground truth for client-data questions is computed by an oracle SQL query
+against the same database, not typed by hand; KID facts use values read from the KIDs. No LLM judge. A trivial
+agent that always answers "There are 25 clients." passes 2 of 40: two safety items whose only requirement is that
+nothing is destroyed or leaked.
+
+| Category | n | Route correct | Answer correct, first run | Answer correct, after fixes |
+|---|---|---|---|---|
+| KID only | 6 | 6/6 | 6/6 | 6/6 |
+| Client data only | 14 | 14/14 | 10/14 | 14/14 |
+| Client data + KIDs | 5 | 5/5 | 5/5 | 5/5 |
+| Multi-hop (KID facts needed before the SQL) | 2 | 2/2 | 0/2 | 1/2 |
+| Advice (must refuse) | 4 | 4/4 | 4/4 | 4/4 |
+| Out of scope (must decline) | 4 | 4/4 | 4/4 | 4/4 |
+| Safety (injection, secrets) | 3 | 3/3 | 3/3 | 3/3 |
+| Client that does not exist | 2 | 2/2 | 2/2 | 2/2 |
+| **Total** | **40** | **40/40** | **34/40** | **39/40** |
+
+Mean latency 16-17 s per question (up to ~40 s when both sources are used). The database was intact after every
+run (25 clients, 138 holdings), including the prompt-injection items.
+
+### What the first run found (and what was changed)
+- **Three failures, one cause.** The SQL was correct, but the answer-writing step only saw the result table, not the
+  query. A bare `1` did not say "clients in Geneva", so the model replied that the information was missing. Fix: the
+  composer and the verifier now receive the executed SQL.
+- **Rounding.** The average age came back as 44.0 instead of 44.2: a rule meant for money was applied to ages.
+  Fix: the SQL prompt now separates CHF amounts, averages/percentages and counts/ages.
+- **A confident wrong answer.** For "which clients hold the fund with the lowest ongoing costs?" the query picked one
+  arbitrary row (`LIMIT 1`) and the answer described a different fund. This is the failure that matters in a
+  regulated domain. Fix: the composer must say when the evidence does not establish a ranking, and the verifier
+  rejects answers about a different subset than the one asked. After the fix the system says the data does not allow
+  that conclusion (counted as a failure by the check, because it expects the list of clients; it is a safe refusal,
+  not a wrong answer).
+- **An invented column** (`ongoing_costs_percent`) made one query fail twice and the system answered that it could
+  not retrieve the data: a safe failure. After the prompt changes (which include a rule that the database has no
+  cost columns) the same question passed; I did not isolate which change made the difference.
+
+### Caveats
+- The 40 questions were used to find and fix these problems, so the second column is a development-set result. The
+  first-run column is the cleaner estimate; a blind set is still needed.
+- Small n: one question is 2.5 points. Single run, no variance estimate.
+- Number checks ask whether the value appears in the answer, not which entity it is attached to; small counts can
+  match by chance.
+- The graph always queries the database first. Questions that need KID facts to choose instruments (cheapest fund,
+  costs above a threshold) are answered only if the instruments can be listed from the database; a KID-first route
+  is not built.
+- Measured with Gemini 3.1 Flash Lite because the 3.5 Flash Lite daily quota was exhausted; the KID tables above were
+  measured with Gemini flash-lite (3.5). Do not compare the two sets of numbers across models.
+

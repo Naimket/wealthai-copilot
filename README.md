@@ -81,6 +81,18 @@ Questions: factual, comparative, hard (paraphrases, synonyms, cross-document), a
 Faithfulness and answer relevancy are measured with [Ragas](https://docs.ragas.io). Ragas only scores questions that
 were answered, so wrongful abstentions are tracked with deterministic checks against known KID values.
 
+**Multi-source router** (40 questions, Gemini 3.1 Flash Lite; ground truth computed by SQL, no LLM judge):
+
+| | Routing | Answer correct |
+|---|---|---|
+| First run | 40/40 | 34/40 |
+| After fixing the causes it exposed | 40/40 | 39/40 |
+
+The first run exposed one shared cause behind three failures (the answer step could not see the SQL filter) and one
+confident wrong answer to a ranking question, which now becomes a refusal ("the data does not allow that
+conclusion"). Refusal of investment advice 4/4, prompt-injection items 3/3, database unchanged afterwards.
+These 40 questions were used to fix the problems, so the second number is a development-set result.
+
 **Honest reading of these numbers**
 - The 55 questions guided the design, so 100% is a development-set result, not a generalisation claim.
 - On this set the agent ties the single-pass pipeline at about 4x the LLM calls and 8x the latency (~17 s vs ~2 s).
@@ -159,7 +171,7 @@ src/wealthai/
 app/             Streamlit front-end (talks to the API only)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
-tests/           61 tests: SQL safety, router control flow, API, UI (no LLM calls)
+tests/           95 tests: SQL safety, router control flow, evaluation checks, API, UI (no LLM calls)
 data/golden/     the 55-question development set
 docs/            results log and agent graphs
 ```
@@ -170,6 +182,7 @@ docs/            results log and agent graphs
 - [ ] Ragas scores for the agent; agent vs single-pass with the same terminology glossary
 - [ ] Macro-report source (central bank publications) and a `macro` route
 - [ ] A test that feeds the verification step deliberately wrong answers
+- [ ] KID-first route for questions that need KID facts before the SQL (for example "clients holding the cheapest fund")
 - [ ] Larger KID library, including Swiss-domiciled products
 - [x] Dockerfile and docker-compose, built and smoke-tested in CI
 - [ ] Deployment notes for AWS or GCP
