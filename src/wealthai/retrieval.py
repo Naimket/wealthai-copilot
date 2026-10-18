@@ -1,11 +1,13 @@
 ﻿"""Retrieval strategies for the ablation study.
 
-Modes: dense | bm25 | hybrid | dense_rerank | hybrid_rerank | hybrid_filter_rerank
+Modes: dense | bm25 | hybrid | dense_rerank | hybrid_rerank | hybrid_filter_rerank | hybrid_perfund_rerank
   dense   : bge-small embeddings in Qdrant (the Phase 3 baseline)
   bm25    : lexical BM25 over the chunk text (exact words like 'Risk Indicator', '0.14%')
   hybrid  : dense + BM25 merged with Reciprocal Rank Fusion (RRF)
   *_rerank: top candidates re-scored by a cross-encoder (reads query and chunk together)
   *_filter: if the question names fund(s), only search those fund's documents
+  *_perfund: like filter, but when several funds are named each one gets its own share of the
+            results (so a comparison never loses one of the funds)
 """
 import json
 import math
@@ -22,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CHUNKS_FILE = ROOT / "data" / "processed" / "chunks.jsonl"
 RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
 CANDIDATES = 20  # how many candidates each retriever contributes before fusion / reranking
-MODES = ["dense", "bm25", "hybrid", "dense_rerank", "hybrid_rerank", "hybrid_filter_rerank"]
+MODES = ["dense", "bm25", "hybrid", "dense_rerank", "hybrid_rerank", "hybrid_filter_rerank", "hybrid_perfund_rerank"]
 
 TOKEN = re.compile(r"[a-z0-9&]+(?:\.[0-9]+)?")
 STOPWORDS = {"the", "a", "an", "of", "is", "are", "and", "or", "in", "to", "for", "on", "per", "what", "which", "do", "does", "it", "its", "this", "that"}
@@ -125,7 +127,7 @@ def rerank(query: str, candidates: list[dict], k: int) -> list[dict]:
 
 
 def retrieve(query: str, k: int = 5, mode: str = "hybrid_filter_rerank") -> list[dict]:
-    sources = detect_funds(query) if mode.endswith("filter_rerank") else None
+    sources = detect_funds(query) if ("filter" in mode or "perfund" in mode) else None
     if mode == "dense":
         return dense_search(query, k)
     if mode == "bm25":
@@ -135,6 +137,13 @@ def retrieve(query: str, k: int = 5, mode: str = "hybrid_filter_rerank") -> list
     hybrid = rrf([dense_search(query, CANDIDATES, sources), bm25_search(query, CANDIDATES, sources)])
     if mode == "hybrid":
         return hybrid[:k]
-    if mode in ("hybrid_rerank", "hybrid_filter_rerank"):
+    if mode == "hybrid_perfund_rerank" and sources and len(sources) > 1:
+        per_fund = max(2, -(-k // len(sources)))  # ceil(k / n_funds), at least 2 chunks per fund
+        merged = []
+        for src in sources:
+            candidates = rrf([dense_search(query, CANDIDATES, [src]), bm25_search(query, CANDIDATES, [src])])
+            merged += rerank(query, candidates[:CANDIDATES], per_fund)
+        return sorted(merged, key=lambda c: -c["score"])
+    if mode in ("hybrid_rerank", "hybrid_filter_rerank", "hybrid_perfund_rerank"):
         return rerank(query, hybrid[:CANDIDATES], k)
     raise ValueError(f"unknown mode {mode!r}; choose from {MODES}")
