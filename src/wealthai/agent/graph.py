@@ -40,7 +40,8 @@ GLOSSARY = """
 Terminology: KIDs do not use the abbreviations TER, OCF or the phrase "expense ratio". The closest KID figure is
 "ongoing costs" (Management fees and other administrative or operating costs, % of the investment per year);
 transaction costs are a separate line. If the question uses one of those terms, answer with the KID's ongoing-costs
-figure and state explicitly that this is the term the KID uses. SRI means the summary risk indicator (X out of 7)."""
+figure and state explicitly that this is the term the KID uses. SRI means the summary risk indicator (X out of 7).
+If the question's fund reference matches several funds in the passages, report the figure for each of them, clearly labelled."""
 
 REWRITE_PROMPT = """You turn a user question into a search query over a library of fund Key Information Documents (KIDs).
 KIDs use fixed vocabulary. Map the user's words to it when relevant:
@@ -57,6 +58,8 @@ GRADE_PROMPT = """Decide whether the passages contain what is needed to answer t
 - For comparisons, rankings, counts or "which funds" questions, EVERY fund involved must appear with its figure.
 - If the question asks for something a KID never contains (live prices, news, macro data, assets under
   management, past performance of a different fund, a fund that is not in the passages), relevant=false.
+- If the question refers to a fund loosely (e.g. "the MSCI World ETF") and the passages cover EVERY fund that
+  matches that description, relevant=true: the answer will report each matching fund. Do not ask for clarification.
 - If relevant=false, say in `missing` what is absent, in a few words.
 
 Question: {question}

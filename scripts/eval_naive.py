@@ -42,6 +42,10 @@ if CACHE.exists():
             row = json.loads(line)
             cache[row["id"]] = row
 
+if "--redo" in sys.argv:  # e.g. --redo q51,q42 : ask these questions again (the newest line in the cache wins)
+    for qid in sys.argv[sys.argv.index("--redo") + 1].split(","):
+        cache.pop(qid.strip(), None)
+
 for item in golden:
     if item["id"] in cache:
         continue
