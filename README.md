@@ -1,5 +1,7 @@
 # WealthAI-Copilot
 
+[![ci](https://github.com/Naimket/wealthai-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Naimket/wealthai-copilot/actions/workflows/ci.yml)
+
 A multi-source RAG agent that helps wealth advisors answer factual questions from **fund Key Information Documents (KIDs)**
 and from **client portfolio data**, without inventing facts and without giving investment advice.
 
@@ -123,6 +125,17 @@ copy .env.example .env          # then put your Gemini API key (free from Google
    Interactive API docs: http://127.0.0.1:8000/docs
 4. Tests (no API key, no models needed): `uv run pytest`
 
+### Docker
+
+After step 2 (the data is built locally and mounted, not baked into the images):
+
+```powershell
+docker compose up --build
+```
+
+UI on http://localhost:8501 and API docs on http://localhost:8000/docs. CI builds both images and checks that
+the API answers on `/health`; the full question-answering path runs in the local setup above.
+
 Reproduce the evaluation (uses the daily free-tier quota; see `docs/results.md`):
 
 ```powershell
@@ -144,6 +157,7 @@ src/wealthai/
   llm.py         Gemini wrapper: structured output, retries, throttling
   api.py         FastAPI service
 app/             Streamlit front-end (talks to the API only)
+Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
 tests/           61 tests: SQL safety, router control flow, API, UI (no LLM calls)
 data/golden/     the 55-question development set
@@ -157,7 +171,8 @@ docs/            results log and agent graphs
 - [ ] Macro-report source (central bank publications) and a `macro` route
 - [ ] A test that feeds the verification step deliberately wrong answers
 - [ ] Larger KID library, including Swiss-domiciled products
-- [ ] Dockerfile and docker-compose; deployment notes for AWS or GCP
+- [x] Dockerfile and docker-compose, built and smoke-tested in CI
+- [ ] Deployment notes for AWS or GCP
 
 ## Limitations
 
