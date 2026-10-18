@@ -16,24 +16,19 @@ Every LLM node returns a small Pydantic object (structured output), so the contr
 typed fields, never by parsing free text.
 """
 import operator
-import re
 from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from wealthai.agent.guardrails import ABSTAIN_MSG, ADVICE, REFUSE_MSG  # noqa: F401
 from wealthai.llm import generate
 from wealthai.rag.naive import PROMPT, RagAnswer
 from wealthai.retrieval import retrieve
 
 MAX_RETRIEVALS = 2  # first search + 1 retry with a rewritten query
 RETRIEVAL_MODE = "hybrid_perfund_rerank"
-ABSTAIN_MSG = "The provided documents do not contain enough information to answer this question reliably."
-REFUSE_MSG = ("I can only report facts from the fund documents (KIDs). I cannot give personal investment "
-              "advice or recommend buying or selling a product; that is a suitability decision for the advisor.")
-
-# Deterministic compliance guardrail: runs before any LLM call.
-ADVICE = re.compile(r"\bshould\b.{0,100}\b(buy|sell|invest|hold|choose|pick|switch)\b|\brecommend(?:ation)?s?\b", re.I | re.S)  # 'recommended holding period' must NOT match
+# Compliance constants live in guardrails.py (shared with the multi-source agent).
 
 GLOSSARY = """
 

@@ -1,0 +1,350 @@
+"""Multi-source advisor agent: routes a question to the KID agent, the client database, or both.
+
+        guard --advice--> refuse
+          |
+        route --advice-------> refuse
+          |   --out_of_scope-> out_of_scope
+          |   --kid----------> kid_agent ---------------------------> END   (the evaluated KID agent, unchanged)
+          |
+        sql_gen <--(error, once)-- sql_run <--+
+          |                          |
+          +--------------------------+  route=portfolio --------------+
+                                     |                                |
+                                     +-- route=both --> kid_question -+-- needed --> kid_agent
+                                                                      |                  |
+                                                  compose <-----------+------------------+
+                                                     |
+                                                  verify_final --supported--> END
+                                                     ^   |
+                                                     +---+-- once; still unsupported --> abstain
+
+The SQL is written by the LLM but runs through tools.sql (read-only, whitelisted). The final answer of a
+multi-source question is checked against ALL the evidence (database rows + KID answer + KID passages).
+"""
+import operator
+from typing import Annotated, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+
+from wealthai.agent.guardrails import ABSTAIN_MSG, REFUSE_MSG, is_advice_request
+from wealthai.llm import generate
+from wealthai.tools.sql import DEFAULT_DB, SCHEMA_DESCRIPTION, SqlToolError, run_query
+
+DB_PATH = DEFAULT_DB
+MAX_SQL_ATTEMPTS = 2  # first query + 1 retry with the error message
+OUT_OF_SCOPE_MSG = ("I can answer questions about the fund KIDs and about the client portfolios in this system. "
+                    "This question is outside that scope.")
+SQL_FAILED_MSG = "I could not retrieve the portfolio data needed to answer this question."
+ROUTES = {"kid", "portfolio", "both", "advice", "out_of_scope"}
+
+ROUTE_PROMPT = """You route questions from a wealth advisor to the right knowledge source.
+
+Sources:
+- KIDs: Key Information Documents of five ETFs (iShares Core MSCI EM IMI, iShares Core MSCI World,
+  iShares Core S&P 500, Vanguard FTSE All-World, Xtrackers MSCI World): costs, risk indicator (SRI),
+  recommended holding period, performance scenarios, what happens if the provider fails.
+- Portfolio database: fictional clients (age, city, risk profile, horizon) and their holdings and values.
+
+Choose exactly one route:
+- kid: needs only facts from the KIDs; no client is involved.
+- portfolio: needs only client data (who holds what, values, allocations, rankings or counts of clients).
+- both: needs client data AND KID facts (for example the costs or risk of the funds a client holds).
+- advice: asks what to buy, sell or choose, or whether something is suitable or recommended for a client.
+- out_of_scope: anything else (market news, live prices, macro views, general chat).
+
+Question: {question}"""
+
+SQL_PROMPT = """Write ONE SQLite SELECT query that answers the question.
+
+{schema}
+Rules:
+- Match clients by name with: lower(clients.name) LIKE lower('%name as written%').
+- Portfolio value = SUM(holdings.market_value_chf). Round money with ROUND(x, 0). Use shares of a total when asked for allocations.
+- Return only the columns needed, with readable aliases. End with LIMIT 50 unless you aggregate to one row.
+- If the question also needs KID facts about the instruments, include instruments.name, instruments.isin and instruments.kid_source in the result.
+- Do not answer the question; only write the query.
+{feedback}
+Question: {question}"""
+
+KID_QUESTION_PROMPT = """The advisor asked the question below. The database result shows the client's data.
+Write ONE self-contained question for the fund-document (KID) assistant about the instruments in the result.
+- Use the exact instrument names from the result, only for instruments whose kid_source is not empty.
+- Ask only for the KID facts the advisor needs (for example ongoing costs, risk indicator, holding period).
+- If no instrument in the result has a KID, set needed=false.
+
+Advisor question: {question}
+
+Database result:
+{table}"""
+
+COMPOSE_PROMPT = """You are an assistant for wealth advisors. Answer the question using ONLY the evidence below.
+
+DATABASE RESULT (fictional client data, amounts in CHF):
+{table}
+
+KID ANSWER (from the fund documents):
+{kid}
+
+Rules:
+- Never use outside knowledge and never guess a number. Do the arithmetic only from the figures shown.
+- If the database result has no rows, say no matching client data was found.
+- For an instrument whose kid_source is empty, say that no KID is available in the knowledge base for it.
+- If the KID answer says the documents lack something, say so instead of filling the gap.
+- Do not give investment advice or recommendations. Be concise and name the client and fund each figure belongs to.
+- Write amounts as CHF with thousands separators (for example CHF 1,494,694).
+- Set answerable=false only if the evidence cannot answer the question.
+{feedback}
+Question: {question}"""
+
+VERIFY_PROMPT = """Check the ANSWER against the EVIDENCE. supported=true only if every number, name and claim in the answer
+appears in, or follows directly from, the evidence (re-do any sum, share or ranking yourself).
+List any unsupported claim in `unsupported`.
+
+Question: {question}
+
+DATABASE RESULT (fictional client data; all amounts are in CHF):
+{table}
+
+KID ANSWER:
+{kid}
+
+KID PASSAGES:
+{passages}
+
+ANSWER: {answer}"""
+
+
+class Route(BaseModel):
+    route: str = Field(description="One of: kid, portfolio, both, advice, out_of_scope")
+    reason: str = Field(default="", description="One short sentence")
+
+
+class SqlQuery(BaseModel):
+    sql: str = Field(description="A single SQLite SELECT statement")
+
+
+class KidQuestion(BaseModel):
+    needed: bool
+    question: str = Field(default="", description="Self-contained question for the KID assistant")
+
+
+class FinalAnswer(BaseModel):
+    answerable: bool
+    answer: str
+
+
+class Verification(BaseModel):
+    supported: bool
+    unsupported: str = Field(default="", description="Unsupported claims, if any")
+
+
+class State(TypedDict, total=False):
+    question: str
+    route: str
+    sql: str
+    sql_attempts: int
+    sql_error: str
+    table: str
+    kid_question: str
+    kid: dict
+    answer: str
+    answerable: bool
+    drafts: int
+    unsupported: str
+    supported: bool
+    trace: Annotated[list[str], operator.add]
+
+
+def run_kid_agent(question: str) -> dict:
+    """The KID agent (imported lazily: loading it also loads the embedding and reranking models)."""
+    from wealthai.agent.graph import run_agent
+
+    return run_agent(question)
+
+
+def _kid_text(state: State) -> str:
+    kid = state.get("kid")
+    if not kid:
+        return "(not requested)"
+    return kid["answer"] if kid["answerable"] else f"The KID assistant could not answer: {kid['answer']}"
+
+
+def _passages(state: State) -> str:
+    kid = state.get("kid")
+    if not kid or not kid["contexts"]:
+        return "(none)"
+    return "\n\n".join(f"[{i}] {c}" for i, c in enumerate(kid["contexts"], start=1))
+
+
+# ---- nodes -------------------------------------------------------------------------------------------------------
+def guard(state: State) -> dict:
+    return {"sql_attempts": 0, "drafts": 0, "trace": ["guard"]}
+
+
+def refuse(state: State) -> dict:
+    return {"route": "advice", "answer": REFUSE_MSG, "answerable": False, "trace": ["refuse (advice request)"]}
+
+
+def route(state: State) -> dict:
+    out = generate(ROUTE_PROMPT.format(question=state["question"]), schema=Route)
+    chosen = out.route.strip().lower()
+    if chosen not in ROUTES:
+        chosen = "kid"  # the KID agent abstains by itself when the documents cannot answer
+    return {"route": chosen, "trace": [f"route -> {chosen} ({out.reason})"]}
+
+
+def out_of_scope(state: State) -> dict:
+    return {"answer": OUT_OF_SCOPE_MSG, "answerable": False, "trace": ["out_of_scope"]}
+
+
+def kid_agent(state: State) -> dict:
+    question = state.get("kid_question") or state["question"]
+    kid = run_kid_agent(question)
+    trace = [f"kid_agent({question!r})"] + [f"    {step}" for step in kid["trace"]]
+    update = {"kid": kid, "trace": trace}
+    if state["route"] == "kid":  # nothing to combine: the KID answer is the answer
+        update.update(answer=kid["answer"], answerable=kid["answerable"])
+    return update
+
+
+def sql_gen(state: State) -> dict:
+    feedback = f"Your previous query failed: {state['sql_error']}. Fix it." if state.get("sql_error") else ""
+    prompt = SQL_PROMPT.format(schema=SCHEMA_DESCRIPTION, question=state["question"], feedback=feedback)
+    out = generate(prompt, schema=SqlQuery)
+    return {"sql": out.sql.strip(), "sql_attempts": state.get("sql_attempts", 0) + 1, "trace": [f"sql_gen -> {out.sql.strip()!r}"]}
+
+
+def sql_run(state: State) -> dict:
+    try:
+        result = run_query(state["sql"], db_path=DB_PATH)
+    except SqlToolError as exc:
+        return {"sql_error": str(exc), "trace": [f"sql_run error: {exc}"]}
+    return {"sql_error": "", "table": result.to_markdown(), "trace": [f"sql_run ok -> {len(result.rows)} rows"]}
+
+
+def sql_failed(state: State) -> dict:
+    return {"answer": SQL_FAILED_MSG, "answerable": False, "trace": ["sql_failed"]}
+
+
+def kid_question(state: State) -> dict:
+    out = generate(KID_QUESTION_PROMPT.format(question=state["question"], table=state["table"]), schema=KidQuestion)
+    if not out.needed or not out.question.strip():
+        return {"kid_question": "", "trace": ["kid_question -> not needed (no KID for these instruments)"]}
+    return {"kid_question": out.question.strip(), "trace": [f"kid_question -> {out.question.strip()!r}"]}
+
+
+def compose(state: State) -> dict:
+    feedback = ""
+    if state.get("unsupported"):
+        feedback = f"Your previous draft had unsupported claims: {state['unsupported']}. Remove them; use only the evidence."
+    prompt = COMPOSE_PROMPT.format(table=state["table"], kid=_kid_text(state), question=state["question"], feedback=feedback)
+    out = generate(prompt, schema=FinalAnswer)
+    drafts = state.get("drafts", 0) + 1
+    return {"answer": out.answer, "answerable": out.answerable, "drafts": drafts,
+            "trace": [f"compose (draft {drafts}) answerable={out.answerable}"]}
+
+
+def verify_final(state: State) -> dict:
+    prompt = VERIFY_PROMPT.format(question=state["question"], table=state["table"], kid=_kid_text(state),
+                                  passages=_passages(state), answer=state["answer"])
+    out = generate(prompt, schema=Verification)
+    return {"supported": out.supported, "unsupported": out.unsupported,
+            "trace": [f"verify_final supported={out.supported} {out.unsupported!r}"]}
+
+
+def abstain(state: State) -> dict:
+    return {"answer": ABSTAIN_MSG, "answerable": False, "trace": ["abstain"]}
+
+
+# ---- routing -----------------------------------------------------------------------------------------------------
+def after_guard(state: State) -> str:
+    return "refuse" if is_advice_request(state["question"]) else "route"
+
+
+def after_route(state: State) -> str:
+    return {"kid": "kid_agent", "portfolio": "sql_gen", "both": "sql_gen",
+            "advice": "refuse", "out_of_scope": "out_of_scope"}[state["route"]]
+
+
+def after_sql_run(state: State) -> str:
+    if state.get("sql_error"):
+        return "sql_gen" if state["sql_attempts"] < MAX_SQL_ATTEMPTS else "sql_failed"
+    return "kid_question" if state["route"] == "both" else "compose"
+
+
+def after_kid_question(state: State) -> str:
+    return "kid_agent" if state.get("kid_question") else "compose"
+
+
+def after_kid_agent(state: State) -> str:
+    return END if state["route"] == "kid" else "compose"
+
+
+def after_compose(state: State) -> str:
+    return "verify_final" if state["answerable"] else END
+
+
+def after_verify(state: State) -> str:
+    if state["supported"]:
+        return END
+    return "compose" if state["drafts"] < 2 else "abstain"  # one regeneration, then give up
+
+
+def build_graph():
+    g = StateGraph(State)
+    for name, fn in [("guard", guard), ("refuse", refuse), ("route", route), ("out_of_scope", out_of_scope),
+                     ("kid_agent", kid_agent), ("sql_gen", sql_gen), ("sql_run", sql_run), ("sql_failed", sql_failed),
+                     ("kid_question", kid_question), ("compose", compose), ("verify_final", verify_final),
+                     ("abstain", abstain)]:
+        g.add_node(name, fn)
+    g.add_edge(START, "guard")
+    g.add_conditional_edges("guard", after_guard, {"refuse": "refuse", "route": "route"})
+    g.add_conditional_edges("route", after_route, {"kid_agent": "kid_agent", "sql_gen": "sql_gen",
+                                                   "refuse": "refuse", "out_of_scope": "out_of_scope"})
+    g.add_edge("sql_gen", "sql_run")
+    g.add_conditional_edges("sql_run", after_sql_run, {"sql_gen": "sql_gen", "sql_failed": "sql_failed",
+                                                       "kid_question": "kid_question", "compose": "compose"})
+    g.add_conditional_edges("kid_question", after_kid_question, {"kid_agent": "kid_agent", "compose": "compose"})
+    g.add_conditional_edges("kid_agent", after_kid_agent, {END: END, "compose": "compose"})
+    g.add_conditional_edges("compose", after_compose, {"verify_final": "verify_final", END: END})
+    g.add_conditional_edges("verify_final", after_verify, {"compose": "compose", "abstain": "abstain", END: END})
+    for terminal in ("refuse", "out_of_scope", "sql_failed", "abstain"):
+        g.add_edge(terminal, END)
+    return g.compile()
+
+
+_graph = None
+
+
+def run_multi(question: str) -> dict:
+    """Run the multi-source agent. Same keys as the KID agent, plus route, sql and the full trace.
+
+    `contexts` holds the KID passages and, when the database was used, one extra entry with the SQL result,
+    so the faithfulness of multi-source answers can be measured with the same tooling.
+    """
+    global _graph
+    if _graph is None:
+        _graph = build_graph()
+    s = _graph.invoke({"question": question})
+    kid = s.get("kid") or {}
+    contexts = list(kid.get("contexts", []))
+    sources = list(kid.get("sources", []))
+    sections = list(kid.get("sections", []))
+    if s.get("table"):
+        contexts.append(f"SQL: {s['sql']}\n{s['table']}")
+        sources.append("portfolios.db")
+        sections.append("sql result")
+    return {
+        "question": question,
+        "answer": s["answer"],
+        "answerable": s["answerable"],
+        "citations": kid.get("citations", []) if s.get("route") == "kid" else [],
+        "contexts": contexts,
+        "sources": sources,
+        "sections": sections,
+        "mode": "multi",
+        "route": s.get("route", ""),
+        "sql": s.get("sql", ""),
+        "trace": s["trace"],
+    }

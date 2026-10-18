@@ -22,6 +22,8 @@ ALLOWED_TABLES = frozenset({"clients", "instruments", "holdings"})
 ALLOWED_FUNCTIONS = frozenset({
     "count", "sum", "avg", "min", "max", "total", "round", "abs", "coalesce", "ifnull", "nullif",
     "lower", "upper", "length", "substr", "group_concat", "date", "strftime",
+    "like",  # SQLite runs the LIKE operator as a function, so it must be listed explicitly
+    "trim", "instr", "replace",
 })
 MAX_ROWS = 50
 TIMEOUT_SECONDS = 2.0

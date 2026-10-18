@@ -34,6 +34,19 @@ def test_join_and_aggregate(db):
     assert r.rows[0][1] >= r.rows[1][1] >= r.rows[2][1] > 0
 
 
+@pytest.mark.parametrize("sql", [
+    "SELECT name FROM clients WHERE lower(name) LIKE lower('%a%')",  # regression: LIKE was rejected
+    "SELECT name FROM clients WHERE name LIKE 'A%' ORDER BY name",
+    "SELECT risk_profile, COUNT(*) FROM clients GROUP BY risk_profile HAVING COUNT(*) >= 1",
+    "SELECT DISTINCT asset_class FROM instruments WHERE asset_class IN ('Equity', 'Bond')",
+    "SELECT CASE WHEN age < 40 THEN 'young' ELSE 'senior' END AS band, AVG(age) FROM clients GROUP BY band",
+    "SELECT ROUND(SUM(market_value_chf), 0) FROM holdings WHERE units BETWEEN 0 AND 1e12",
+    "SELECT instr(name, ' '), trim(name), replace(name, ' ', '_') FROM clients LIMIT 1",
+])
+def test_common_analytical_constructs_are_allowed(db, sql):
+    assert q(db, sql).columns
+
+
 def test_cte_is_allowed(db):
     r = q(db, "WITH t AS (SELECT client_id FROM clients) SELECT COUNT(*) FROM t")
     assert r.rows == [(N_CLIENTS,)]

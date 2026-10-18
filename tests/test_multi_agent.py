@@ -1,0 +1,204 @@
+"""Control-flow tests for the multi-source agent. The LLM and the KID agent are replaced by scripted fakes,
+so these tests check the routing, the SQL retry, the verification loop and the guardrails: no API, no models."""
+import pytest
+
+from wealthai.agent import multi
+from wealthai.agent.guardrails import ABSTAIN_MSG, REFUSE_MSG
+from wealthai.portfolio.synthetic import Instrument, build_database
+
+GOOD_SQL = "SELECT COUNT(*) AS n FROM clients"
+KID_RESULT = {
+    "answer": "Test World ETF has ongoing costs of 0.20% per year.",
+    "answerable": True,
+    "citations": [1],
+    "contexts": ["Test World ETF | costs: ongoing costs 0.20%"],
+    "sources": ["test.pdf"],
+    "sections": ["What are the costs?"],
+    "trace": ["guard", "rewrite", "retrieve", "grade", "generate", "verify"],
+}
+
+
+class FakeLLM:
+    """Returns the scripted objects for each schema, in order; the last one repeats."""
+
+    def __init__(self, **by_schema):
+        self.queues = {name: list(items) for name, items in by_schema.items()}
+        self.calls = []
+
+    def __call__(self, prompt, schema=None, **kwargs):
+        self.calls.append(schema.__name__)
+        queue = self.queues[schema.__name__]
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    def count(self, schema_name):
+        return self.calls.count(schema_name)
+
+
+@pytest.fixture
+def setup(monkeypatch, tmp_path):
+    db = build_database(tmp_path / "p.db", [Instrument("Test World ETF", "IE00TEST0001", "Equity", "Global", "test.pdf")],
+                        n_clients=10, seed=1)
+    monkeypatch.setattr(multi, "DB_PATH", db)
+    monkeypatch.setattr(multi, "_graph", None)
+    kid_calls = []
+
+    def fake_kid(question):
+        kid_calls.append(question)
+        return dict(KID_RESULT)
+
+    monkeypatch.setattr(multi, "run_kid_agent", fake_kid)
+
+    def install(**scripts):
+        llm = FakeLLM(**scripts)
+        monkeypatch.setattr(multi, "generate", llm)
+        return llm
+
+    return install, kid_calls
+
+
+def R(route):
+    return multi.Route(route=route, reason="test")
+
+
+def FA(text="ok", answerable=True):
+    return multi.FinalAnswer(answerable=answerable, answer=text)
+
+
+def V(supported, unsupported=""):
+    return multi.Verification(supported=supported, unsupported=unsupported)
+
+
+# --- guardrails and trivial routes ------------------------------------------------------------------
+
+def test_regex_guard_refuses_without_any_llm_call(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("kid")])
+    out = multi.run_multi("Should I buy the Vanguard fund for Alice?")
+    assert out["answer"] == REFUSE_MSG and not out["answerable"] and out["route"] == "advice"
+    assert llm.calls == [] and kid_calls == []
+
+
+def test_llm_router_can_refuse_suitability_questions(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("advice")])
+    out = multi.run_multi("Is the Xtrackers fund suitable for Alice Brunner?")
+    assert out["answer"] == REFUSE_MSG and out["route"] == "advice"
+    assert llm.calls == ["Route"] and kid_calls == []
+
+
+def test_out_of_scope(setup):
+    install, kid_calls = setup
+    install(Route=[R("out_of_scope")])
+    out = multi.run_multi("What is the weather in Nyon?")
+    assert out["answer"] == multi.OUT_OF_SCOPE_MSG and kid_calls == []
+
+
+def test_unknown_route_falls_back_to_kid_agent(setup):
+    install, kid_calls = setup
+    install(Route=[R("banana")])
+    out = multi.run_multi("What are the costs of the Test World ETF?")
+    assert out["route"] == "kid" and len(kid_calls) == 1
+
+
+# --- KID-only route ---------------------------------------------------------------------------------
+
+def test_kid_route_passes_the_question_through_and_returns_its_answer(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("kid")])
+    out = multi.run_multi("What are the ongoing costs of the Test World ETF?")
+    assert kid_calls == ["What are the ongoing costs of the Test World ETF?"]
+    assert out["answer"] == KID_RESULT["answer"] and out["answerable"]
+    assert out["citations"] == [1] and out["sql"] == ""
+    assert llm.calls == ["Route"]  # no SQL, no compose, no verify
+    assert any("kid_agent" in step for step in out["trace"])
+
+
+# --- portfolio-only route ---------------------------------------------------------------------------
+
+def test_portfolio_route_runs_sql_composes_and_verifies(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("There are 10 clients.")], Verification=[V(True)])
+    out = multi.run_multi("How many clients do we have?")
+    assert out["answer"] == "There are 10 clients." and out["answerable"]
+    assert out["sql"] == GOOD_SQL and kid_calls == []
+    assert llm.calls == ["Route", "SqlQuery", "FinalAnswer", "Verification"]
+    assert out["contexts"][-1].startswith("SQL: SELECT COUNT(*)") and "10" in out["contexts"][-1]
+    assert out["sources"][-1] == "portfolios.db"
+
+
+def test_sql_error_is_fed_back_and_retried_once(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")],
+                  SqlQuery=[multi.SqlQuery(sql="DELETE FROM clients"), multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("10 clients.")], Verification=[V(True)])
+    out = multi.run_multi("How many clients do we have?")
+    assert llm.count("SqlQuery") == 2 and out["answer"] == "10 clients."
+    assert any(step.startswith("sql_run error") for step in out["trace"])
+
+
+def test_two_sql_failures_give_a_safe_message(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql="DROP TABLE clients")])
+    out = multi.run_multi("Delete everything")
+    assert out["answer"] == multi.SQL_FAILED_MSG and not out["answerable"]
+    assert llm.count("SqlQuery") == multi.MAX_SQL_ATTEMPTS and llm.count("FinalAnswer") == 0
+
+
+def test_empty_result_still_goes_through_compose(setup):
+    install, _ = setup
+    install(Route=[R("portfolio")],
+            SqlQuery=[multi.SqlQuery(sql="SELECT name FROM clients WHERE name = 'Nobody'")],
+            FinalAnswer=[FA("No matching client data was found.")], Verification=[V(True)])
+    out = multi.run_multi("What does Nobody hold?")
+    assert "(no rows)" in out["contexts"][-1] and "No matching" in out["answer"]
+
+
+# --- both sources -----------------------------------------------------------------------------------
+
+def test_both_route_asks_the_kid_agent_a_self_contained_question(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("both")], SqlQuery=[multi.SqlQuery(sql="SELECT name, kid_source FROM instruments")],
+                  KidQuestion=[multi.KidQuestion(needed=True, question="What are the ongoing costs of Test World ETF?")],
+                  FinalAnswer=[FA("Alice holds Test World ETF (0.20% ongoing costs).")], Verification=[V(True)])
+    out = multi.run_multi("What do the funds Alice holds cost?")
+    assert kid_calls == ["What are the ongoing costs of Test World ETF?"]
+    assert llm.calls == ["Route", "SqlQuery", "KidQuestion", "FinalAnswer", "Verification"]
+    assert out["answerable"] and any(c.startswith("SQL:") for c in out["contexts"])
+    assert KID_RESULT["contexts"][0] in out["contexts"]  # KID passages travel with the answer
+
+
+def test_both_route_skips_the_kid_agent_when_no_instrument_has_a_kid(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("both")], SqlQuery=[multi.SqlQuery(sql="SELECT name FROM instruments WHERE kid_source IS NULL")],
+                  KidQuestion=[multi.KidQuestion(needed=False)],
+                  FinalAnswer=[FA("No KID is available for these instruments.")], Verification=[V(True)])
+    out = multi.run_multi("What do the bond funds Alice holds cost?")
+    assert kid_calls == [] and llm.count("KidQuestion") == 1 and out["answerable"]
+
+
+# --- verification loop ------------------------------------------------------------------------------
+
+def test_unsupported_draft_is_regenerated_once(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("There are 11 clients."), FA("There are 10 clients.")],
+                  Verification=[V(False, "11 is not in the evidence"), V(True)])
+    out = multi.run_multi("How many clients do we have?")
+    assert out["answer"] == "There are 10 clients." and llm.count("FinalAnswer") == 2
+
+
+def test_still_unsupported_after_one_retry_abstains(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("There are 11 clients.")], Verification=[V(False, "made up")])
+    out = multi.run_multi("How many clients do we have?")
+    assert out["answer"] == ABSTAIN_MSG and not out["answerable"] and llm.count("FinalAnswer") == 2
+
+
+def test_unanswerable_compose_skips_verification(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("The data cannot answer this.", answerable=False)])
+    out = multi.run_multi("What is the meaning of life?")
+    assert not out["answerable"] and llm.count("Verification") == 0
