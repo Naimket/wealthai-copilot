@@ -2,9 +2,13 @@
 
 Answers are cached in data/eval/naive_answers.jsonl, so re-running only calls Gemini
 for questions that are still missing (the free tier is slow and rate-limited).
-Usage: uv run python scripts/eval_naive.py [--fresh]
+Usage: uv run python scripts/eval_naive.py [--mode dense|bm25|hybrid|...|agent] [--set golden|blind] [--run N] [--fresh] [--redo ids]
+
+--set  which question file to use: data/golden/<set>_set.jsonl (default: golden = the development set)
+--run  repetition number; each run keeps its own cache so variance can be measured (default: no suffix)
 """
 import json
+import os
 import re
 import sys
 import time
@@ -26,9 +30,16 @@ def answer_question(question, mode):
     return _naive_answer(question, mode=mode)
 
 
-GOLDEN = ROOT / "data" / "golden" / "golden_set.jsonl"
-MODE = sys.argv[sys.argv.index("--mode") + 1] if "--mode" in sys.argv else "dense"
-CACHE = ROOT / "data" / "eval" / ("naive_answers.jsonl" if MODE == "dense" else f"answers_{MODE}.jsonl")
+def _option(name, default):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
+
+
+SET = _option("--set", "golden")
+RUN = _option("--run", "")
+GOLDEN = ROOT / "data" / "golden" / f"{SET}_set.jsonl"
+MODE = _option("--mode", "dense")
+_stem = "naive_answers" if MODE == "dense" else f"answers_{MODE}"
+CACHE = ROOT / "data" / "eval" / (_stem + ("" if SET == "golden" else f"_{SET}") + (f"_r{RUN}" if RUN else "") + ".jsonl")
 PAUSE_SECONDS = 0  # wealthai.llm already spaces calls to respect the free-tier requests-per-minute limit
 
 golden = [json.loads(line) for line in GOLDEN.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -93,7 +104,7 @@ for item in golden:
         if not correct:
             failures.append((item, r))
 
-print("\n=== NAIVE RAG BASELINE ===")
+print(f"\n=== {MODE.upper()} | set={SET} | run={RUN or '-'} | model={os.environ.get('GEMINI_MODEL', '(default from llm.py)')} ===")
 for t, metrics in stats.items():
     for name, values in metrics.items():
         print(f"{t:13s} {name:18s} {sum(values):2d}/{len(values):2d} = {100 * sum(values) / len(values):5.1f}%")

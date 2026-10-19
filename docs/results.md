@@ -69,6 +69,20 @@ Graph: guard (advice refusal, rule-based) -> rewrite -> retrieve (hybrid + per-f
 Agent behaviour over the 55 questions: 1 refused as advice request (0 LLM calls), 11 retried retrieval and
 abstained (all questions with no answer in the KIDs, no false abstentions after the fix), 0 regenerations.
 
+**Ragas for the agent** (answered questions of the 55 dev set; judge: Gemini flash-lite default, local embeddings):
+
+| Question type | Faithfulness | Answer relevancy |
+|---|---|---|
+| Factual | 1.000 | 0.977 |
+| Comparative | 1.000 | 0.913 |
+| Hard | 0.904 | 0.911 |
+| Overall | 0.957 | 0.942 |
+
+0 NaN. For comparison, the single-pass hybrid + per-fund + rerank pipeline scored 0.995 / 0.927 overall.
+The agent's lower faithfulness sits in the hard questions. The cause has not been investigated yet (per-question
+scores are in `data/eval/ragas_agent.csv`); Ragas judges with an LLM, so on a small set a few low scores move the
+mean. Treat the gap as a lead to examine, not as a finding.
+
 ### Findings
 - On this dev set the agent ties the single-pass pipeline with ~4x the LLM calls and ~8x the latency.
   The grade node works as an "is this in the documents?" detector (11/11 correct abstentions).

@@ -2,7 +2,7 @@
 
 Uses Gemini (flash-lite) as the judge and local fastembed embeddings, so it stays free.
 Reads  data/eval/naive_answers.jsonl  (made by eval_naive.py) and writes data/eval/ragas_naive.csv.
-Usage: uv run python scripts/eval_ragas.py [answers_file] [output_csv]
+Usage: uv run python scripts/eval_ragas.py [answers_file] [output_csv] [--set golden|blind]
 """
 import json
 import os
@@ -25,9 +25,11 @@ from ragas.llms import LangchainLLMWrapper  # noqa: E402
 from ragas.metrics import AnswerRelevancy, Faithfulness  # noqa: E402
 from ragas.run_config import RunConfig  # noqa: E402
 
-ANSWERS = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data" / "eval" / "naive_answers.jsonl"
-OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "data" / "eval" / "ragas_naive.csv"
-GOLDEN = ROOT / "data" / "golden" / "golden_set.jsonl"
+SET = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "golden"
+_args = [a for i, a in enumerate(sys.argv[1:], 1) if a != "--set" and sys.argv[i - 1] != "--set"]
+ANSWERS = Path(_args[0]) if len(_args) > 0 else ROOT / "data" / "eval" / "naive_answers.jsonl"
+OUT = Path(_args[1]) if len(_args) > 1 else ROOT / "data" / "eval" / "ragas_naive.csv"
+GOLDEN = ROOT / "data" / "golden" / f"{SET}_set.jsonl"
 
 
 class LocalEmbeddings(Embeddings):
@@ -51,7 +53,7 @@ for line in GOLDEN.read_text(encoding="utf-8").splitlines():
 rows = [json.loads(l) for l in ANSWERS.read_text(encoding="utf-8").splitlines() if l.strip()]
 # Abstentions ("the documents do not contain...") have no claims to verify: Ragas only scores answered questions.
 rows = [r for r in rows if r["answerable"] and r["id"] in golden]
-print(f"Scoring {len(rows)} answered questions with Ragas...")
+print(f"Scoring {len(rows)} answered questions with Ragas (set={SET}, judge={os.environ.get('GEMINI_MODEL', 'gemini-flash-lite-latest')})...")
 
 judge = LangchainLLMWrapper(ChatGoogleGenerativeAI(
     model=os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest"),

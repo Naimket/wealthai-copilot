@@ -76,7 +76,7 @@ Questions: factual, comparative, hard (paraphrases, synonyms, cross-document), a
 |---|---|---|---|---|---|
 | Dense, single pass | 75% | 58% (11/19) | 12/12 | 0.977 | 0.920 |
 | Hybrid + per-fund + rerank, single pass | 100% | 100% (19/19) | 12/12 | 0.995 | 0.927 |
-| LangGraph agent | 100% | 100% (19/19) | 12/12 | pending | pending |
+| LangGraph agent | 100% | 100% (19/19) | 12/12 | 0.957 | 0.942 |
 
 Faithfulness and answer relevancy are measured with [Ragas](https://docs.ragas.io). Ragas only scores questions that
 were answered, so wrongful abstentions are tracked with deterministic checks against known KID values.
@@ -97,6 +97,8 @@ These 40 questions were used to fix the problems, so the second number is a deve
 - The 55 questions guided the design, so 100% is a development-set result, not a generalisation claim.
 - On this set the agent ties the single-pass pipeline at about 4x the LLM calls and 8x the latency (~17 s vs ~2 s).
   Whether the extra machinery pays off is what the blind test set is for.
+- The agent scores lower on faithfulness than the single-pass pipeline (0.957 vs 0.995), mostly on the hard questions
+  (0.904). Not yet analysed, so no claim is made about the cause; it could be real or judge noise on a small set.
 - The reranker is what moved retrieval; it ties across the three first-stage variants because the set is saturated.
 
 Full tables, findings and caveats: [docs/results.md](docs/results.md).
@@ -179,7 +181,8 @@ docs/            results log and agent graphs
 ## Roadmap
 
 - [ ] Blind test set (new questions, frozen before running) and repeated runs to report variance
-- [ ] Ragas scores for the agent; agent vs single-pass with the same terminology glossary
+- [x] Ragas scores for the agent (development set)
+- [ ] Agent vs single-pass with the same terminology glossary, on the blind set
 - [ ] Macro-report source (central bank publications) and a `macro` route
 - [ ] A test that feeds the verification step deliberately wrong answers
 - [ ] KID-first route for questions that need KID facts before the SQL (for example "clients holding the cheapest fund")
