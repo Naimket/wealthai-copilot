@@ -184,3 +184,31 @@ need only the fund that has the property). Because the fix was designed after se
 questions measures regression, not generalisation. Generalisation is checked on a separate 14-question holdout
 (`data/golden/holdout_set.jsonl`: 12 cross-document questions of the same two kinds plus 2 traps), written before the
 fixed agent was run on it. Results will be added here with the model stated.
+
+### Holdout check of the first fix (14 questions, fixed agent, `gemini-flash-lite-latest`, one run)
+
+| Question type | Answer correct |
+|---|---|
+| Comparative (12) | 11/12 |
+| Unanswerable (2) | 2/2 abstained |
+
+The three failure types of the blind run (total costs, property lookup) are fixed on this set. One new miss:
+**h02** ("which fund has the highest total costs after 1 year"). The first search returned chunks of only four of the
+five funds (the iShares EM IMI KID was absent), the grader accepted them although the rule says every fund must appear,
+and the generator ranked four funds without saying a fifth existed: a confident wrong answer, the worst kind.
+In h01 (the lowest-cost version of the same question) the grader did reject the first search and the retry succeeded,
+so this is run-to-run variance in a prompt-based check, not a fixed behaviour.
+
+Cause: per-fund balancing only runs when the question names funds. "Which fund ..." names none, so a plain top-5 over
+the whole library decides whether every fund is represented. Relying on the grader to notice a missing fund is
+fragile; the guarantee should come from the retrieval layer.
+
+### Second fix: deterministic coverage for cross-fund questions
+`retrieval.is_cross_fund()` flags questions that rank or compare funds without naming any, and then `retrieve(...,
+all_funds=True)` treats the whole library as named: every fund gets its own share (at least 2 chunks each), so a
+ranking can no longer lose a fund. Rule-based, no extra LLM call; 11 tests (no models needed). The decision uses the
+user's wording, not the rewritten query. This change was made after seeing h02, so h02 is no longer a held-out case;
+the next clean check is a fresh run of the 55 development questions (regression) and a new unseen set.
+
+Operational note: h14 took 277 s against ~17 s for the others, consistent with rate-limit back-off near the daily
+quota. Latency figures from days with a nearly exhausted quota should not be quoted.

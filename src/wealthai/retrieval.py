@@ -90,6 +90,17 @@ def detect_funds(query: str) -> list[str] | None:
     return [src for src, s in scores.items() if s >= 0.5 and s >= best - 0.15]
 
 
+# Questions that compare or rank the funds of the library without naming any of them ("which fund has the lowest...").
+CROSS_FUND = re.compile(
+    r"\b(?:which|what)\b.{0,40}\b(?:funds?|etfs?|kids?)\b|\b(?:highest|lowest|cheapest|most expensive|largest|smallest|best|worst|"
+    r"compare|comparison|rank(?:ing)?|every fund|all (?:the |five )?funds|how many)\b", re.I)
+
+
+def is_cross_fund(question: str) -> bool:
+    """True if the question must be answered from ALL funds (it ranks or compares them) but names none of them."""
+    return detect_funds(question) is None and bool(CROSS_FUND.search(question))
+
+
 def dense_search(query: str, n: int, sources: list[str] | None = None) -> list[dict]:
     vector = next(iter(embedder().query_embed(query))).tolist()
     flt = None
@@ -126,8 +137,12 @@ def rerank(query: str, candidates: list[dict], k: int) -> list[dict]:
     return [dict(c, score=float(s)) for c, s in ranked[:k]]
 
 
-def retrieve(query: str, k: int = 5, mode: str = "hybrid_filter_rerank") -> list[dict]:
+def retrieve(query: str, k: int = 5, mode: str = "hybrid_filter_rerank", all_funds: bool = False) -> list[dict]:
+    """all_funds=True (perfund modes only): treat every fund of the library as named, so each one gets its own share
+    of the results. A top-k over the whole library can silently leave a fund out of a ranking."""
     sources = detect_funds(query) if ("filter" in mode or "perfund" in mode) else None
+    if all_funds and "perfund" in mode:
+        sources = list(fund_keys())
     if mode == "dense":
         return dense_search(query, k)
     if mode == "bm25":

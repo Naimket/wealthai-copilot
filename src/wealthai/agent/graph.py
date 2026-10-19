@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from wealthai.agent.guardrails import ABSTAIN_MSG, ADVICE, REFUSE_MSG  # noqa: F401
 from wealthai.llm import generate
 from wealthai.rag.naive import PROMPT, RagAnswer
-from wealthai.retrieval import retrieve
+from wealthai.retrieval import is_cross_fund, retrieve
 
 MAX_RETRIEVALS = 2  # first search + 1 retry with a rewritten query
 RETRIEVAL_MODE = "hybrid_perfund_rerank"
@@ -134,8 +134,10 @@ def rewrite(state: State) -> dict:
 def retrieve_node(state: State) -> dict:
     attempt = state.get("attempt", 0)
     k = 5 + 3 * attempt  # widen the net on a retry
-    chunks = retrieve(state["search_query"], k=k, mode=RETRIEVAL_MODE)
-    return {"chunks": chunks, "attempt": attempt + 1, "trace": [f"retrieve k={k} -> {len(chunks)} chunks"]}
+    cross = is_cross_fund(state["question"])  # decided on the user's words: the rewritten query may lose them
+    chunks = retrieve(state["search_query"], k=k, mode=RETRIEVAL_MODE, all_funds=cross)
+    return {"chunks": chunks, "attempt": attempt + 1,
+            "trace": [f"retrieve k={k} -> {len(chunks)} chunks" + (" (all funds)" if cross else "")]}
 
 
 def grade(state: State) -> dict:
