@@ -36,17 +36,27 @@ chronicle of monetary events, glossary). Map the user's words to the vocabulary 
 - bond yields -> "Confederation bonds" "yield"
 - inflation forecast -> "conditional inflation forecast"
 - what does a term mean -> "Glossary" and the term
+- previous / last / earlier assessment or decision -> "monetary policy assessment of" "quarterly assessment" "Chronicle of monetary events"
+- expectations of households, companies, analysts -> "inflation expectations" "survey" "Consensus Economics"
 Rules: keep every country, date, month, quarter and number of the question; do not add facts or numbers; do not answer.
 {feedback}
 Question: {question}"""
 
 GRADE_PROMPT = """Decide whether the passages contain what is needed to answer the question COMPLETELY.
-- The passages must contain the SAME quantity for the SAME period, country and instrument that the question asks for
+- relevant=true when the answer can be read from the passages, even if they word it differently from the question.
+  The documents are from September 2026, so a month named without a year ("in May", "since June") is in 2026.
+  A value stated as "from 0.6% in May to 0.8% in August" is the value for May AND the value for August. A question
+  that describes a fact ("which index turned positive ...") is answered when a passage states that fact.
+- The passages must concern the SAME quantity for the SAME period, country and instrument that the question asks for
   (August is not May, the euro area is not the United States, the SNB policy rate is not SARON).
 - The documents are SNB publications of September 2026. If the question asks for something they never contain
-  (the level of another central bank's rate, live or intraday market data, index levels, events after
-  24 September 2026, forecasts beyond the horizon they print, figures for individual companies), relevant=false.
+  (live or intraday market data, stock index levels in points, events after 24 September 2026, forecasts beyond
+  the horizon they print, figures for individual companies, countries or central banks they do not mention),
+  relevant=false. The documents DO report some foreign figures (United States, euro area, China, Fed and ECB rates):
+  judge by what the passages say, not by what you expect them to contain.
 - For comparisons, both figures must appear.
+- If the question asks for a specific number or date (day and month), that exact value must appear in the passages;
+  a vague mention ("in June") is not enough.
 - If relevant=false, say in `missing` what is absent, in a few words.
 
 Question: {question}

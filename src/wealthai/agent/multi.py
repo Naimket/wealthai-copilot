@@ -47,13 +47,17 @@ Sources:
   iShares Core S&P 500, Vanguard FTSE All-World, Xtrackers MSCI World): costs, risk indicator (SRI),
   recommended holding period, performance scenarios, what happens if the provider fails.
 - SNB: two Swiss National Bank publications of September 2026 (monetary policy assessment of 24 September 2026 and
-  Quarterly Bulletin 3/2026): policy rate, Swiss and international inflation, GDP, labour market, exchange rates,
-  interest rates, SNB inflation forecast, chronicle of monetary events, glossary of terms.
+  Quarterly Bulletin 3/2026): policy rate, Swiss inflation, GDP, labour market, exchange rates, interest rates,
+  mortgage reference rate and rents, inflation expectations (surveys of households, companies and analysts, for
+  example Consensus Economics), residential real estate prices, the Swiss stock market (SMI, sector indices),
+  money and credit aggregates (monetary base, M1-M3, mortgage lending), SNB inflation forecast, the global economic
+  environment (United States, euro area, China: growth, unemployment, inflation, tariffs, oil prices, Fed and ECB
+  rates), chronicle of monetary events, glossary of terms.
 - Portfolio database: fictional clients (age, city, risk profile, horizon) and their holdings and values.
 
 Choose exactly one route:
 - kid: needs only facts from the KIDs; no client is involved.
-- macro: needs only facts from the SNB publications (monetary policy, inflation, growth, rates, franc); no fund or client is involved.
+- macro: needs only facts from the SNB publications (monetary policy, Swiss or foreign economy, inflation, rates, franc, tariffs); no fund or client is involved.
 - portfolio: needs only client data (who holds what, values, allocations, rankings or counts of clients).
 - both: needs client data AND KID facts (for example the costs or risk of the funds a client holds).
 - advice: asks what to buy, sell or choose, or whether something is suitable or recommended for a client.

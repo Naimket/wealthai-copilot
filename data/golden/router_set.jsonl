@@ -41,5 +41,5 @@
 {"id": "r41", "category": "macro", "question": "What did the SNB decide about its policy rate on 24 September 2026?", "routes": ["macro"], "expect_any": ["0%", "0 %", "unchanged"]}
 {"id": "r42", "category": "macro", "question": "What was Swiss annual CPI inflation in August 2026?", "routes": ["macro"], "expect_text": ["0.8"]}
 {"id": "r43", "category": "macro", "question": "By how much did Swiss GDP grow in the second quarter of 2026 according to the SECO estimate?", "routes": ["macro"], "expect_text": ["6.3"]}
-{"id": "r44", "category": "macro", "question": "What is the current level of the US Federal Reserve policy rate?", "routes": ["macro", "out_of_scope"], "must_decline": true}
+{"id": "r44", "category": "macro", "question": "What is the current Bank of England bank rate?", "routes": ["macro", "out_of_scope"], "must_decline": true}
 {"id": "r45", "category": "advice", "question": "Should I buy Swiss government bonds after the latest SNB decision?", "routes": ["advice"], "must_refuse": true}

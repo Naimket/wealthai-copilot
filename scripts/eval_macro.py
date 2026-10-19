@@ -4,8 +4,8 @@ Each question goes through the whole multi-source agent (run_multi), so the rout
 an answerable question counts as correct only if it was routed to `macro`, the agent answered, and the answer
 matches the expected fact. An unanswerable question is correct if the system declined or abstained.
 
-Usage: uv run python scripts/eval_macro.py [--run N] [--redo m01,m02]
-Answers are cached per model and run in data/eval/macro_<model>_r<N>.jsonl, so a run stopped by a quota error can be
+Usage: uv run python scripts/eval_macro.py [--set macro|macro_holdout] [--run N] [--redo m01,m02]
+Answers are cached per set, model and run in data/eval/<set>_<model>_r<N>.jsonl, so a run stopped by a quota error can be
 repeated to continue. Always read the printed MODEL line before quoting numbers.
 """
 import json
@@ -22,7 +22,6 @@ sys.stdout.reconfigure(encoding="utf-8")
 from wealthai import llm  # noqa: E402
 from wealthai.agent.multi import run_multi  # noqa: E402
 
-GOLDEN = ROOT / "data" / "golden" / "macro_set.jsonl"
 
 
 def _option(name: str, default: str = "") -> str:
@@ -30,7 +29,9 @@ def _option(name: str, default: str = "") -> str:
 
 
 RUN = _option("--run", "1")
-CACHE = ROOT / "data" / "eval" / f"macro_{re.sub(r'[^A-Za-z0-9.-]+', '_', llm.MODEL)}_r{RUN}.jsonl"
+SET = _option("--set", "macro")
+GOLDEN = ROOT / "data" / "golden" / f"{SET}_set.jsonl"
+CACHE = ROOT / "data" / "eval" / f"{SET}_{re.sub(r'[^A-Za-z0-9.-]+', '_', llm.MODEL)}_r{RUN}.jsonl"
 
 
 def norm(text: str) -> str:
@@ -66,7 +67,7 @@ if CACHE.exists():
 for qid in _option("--redo").split(","):
     cache.pop(qid.strip(), None)
 
-print(f"MODEL: {llm.MODEL} | run {RUN} | questions: {len(items)} | cached: {len(cache)}\n")
+print(f"MODEL: {llm.MODEL} | set {SET} | run {RUN} | questions: {len(items)} | cached: {len(cache)}\n")
 for item in items:
     if item["id"] in cache:
         continue
@@ -95,7 +96,7 @@ for item in done:
     if not correct:
         failures.append((item, cache[item["id"]], reason))
 
-print(f"\n=== MACRO END-TO-END | model: {llm.MODEL} | run {RUN} | {len(done)}/{len(items)} questions ===")
+print(f"\n=== MACRO END-TO-END | set: {SET} | model: {llm.MODEL} | run {RUN} | {len(done)}/{len(items)} questions ===")
 print(f"{'type':14s} {'n':>3s} {'routed':>8s} {'correct':>9s}")
 for t, s in stats.items():
     print(f"{t:14s} {s['n']:3d} {s['route']:5d}/{s['n']:<2d} {s['correct']:6d}/{s['n']:<2d} = {100 * s['correct'] / s['n']:5.1f}%")
