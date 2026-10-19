@@ -1,10 +1,11 @@
-"""Multi-source advisor agent: routes a question to the KID agent, the client database, or both.
+"""Multi-source advisor agent: routes a question to the KID agent, the macro agent, the client database, or both.
 
         guard --advice--> refuse
           |
         route --advice-------> refuse
           |   --out_of_scope-> out_of_scope
           |   --kid----------> kid_agent ---------------------------> END   (the evaluated KID agent, unchanged)
+          |   --macro--------> macro_agent --------------------------> END   (SNB publications, own retrieval)
           |
         sql_gen <--(error, once)-- sql_run <--+
           |                          |
@@ -33,10 +34,11 @@ from wealthai.tools.sql import DEFAULT_DB, SCHEMA_DESCRIPTION, SqlToolError, run
 
 DB_PATH = DEFAULT_DB
 MAX_SQL_ATTEMPTS = 2  # first query + 1 retry with the error message
-OUT_OF_SCOPE_MSG = ("I can answer questions about the fund KIDs and about the client portfolios in this system. "
+OUT_OF_SCOPE_MSG = ("I can answer questions about the fund KIDs, the SNB publications of September 2026 and the "
+                    "client portfolios in this system. "
                     "This question is outside that scope.")
 SQL_FAILED_MSG = "I could not retrieve the portfolio data needed to answer this question."
-ROUTES = {"kid", "portfolio", "both", "advice", "out_of_scope"}
+ROUTES = {"kid", "macro", "portfolio", "both", "advice", "out_of_scope"}
 
 ROUTE_PROMPT = """You route questions from a wealth advisor to the right knowledge source.
 
@@ -44,14 +46,19 @@ Sources:
 - KIDs: Key Information Documents of five ETFs (iShares Core MSCI EM IMI, iShares Core MSCI World,
   iShares Core S&P 500, Vanguard FTSE All-World, Xtrackers MSCI World): costs, risk indicator (SRI),
   recommended holding period, performance scenarios, what happens if the provider fails.
+- SNB: two Swiss National Bank publications of September 2026 (monetary policy assessment of 24 September 2026 and
+  Quarterly Bulletin 3/2026): policy rate, Swiss and international inflation, GDP, labour market, exchange rates,
+  interest rates, SNB inflation forecast, chronicle of monetary events, glossary of terms.
 - Portfolio database: fictional clients (age, city, risk profile, horizon) and their holdings and values.
 
 Choose exactly one route:
 - kid: needs only facts from the KIDs; no client is involved.
+- macro: needs only facts from the SNB publications (monetary policy, inflation, growth, rates, franc); no fund or client is involved.
 - portfolio: needs only client data (who holds what, values, allocations, rankings or counts of clients).
 - both: needs client data AND KID facts (for example the costs or risk of the funds a client holds).
 - advice: asks what to buy, sell or choose, or whether something is suitable or recommended for a client.
-- out_of_scope: anything else (market news, live prices, macro views, general chat).
+- out_of_scope: anything else (market news, live prices, general chat). A question about a macro figure that the
+  SNB publications could contain is macro, even if the answer may turn out not to be there.
 
 Question: {question}"""
 
@@ -128,7 +135,7 @@ ANSWER: {answer}"""
 
 
 class Route(BaseModel):
-    route: str = Field(description="One of: kid, portfolio, both, advice, out_of_scope")
+    route: str = Field(description="One of: kid, macro, portfolio, both, advice, out_of_scope")
     reason: str = Field(default="", description="One short sentence")
 
 
@@ -160,6 +167,7 @@ class State(TypedDict, total=False):
     table: str
     kid_question: str
     kid: dict
+    macro: dict
     answer: str
     answerable: bool
     drafts: int
@@ -220,6 +228,19 @@ def kid_agent(state: State) -> dict:
     return update
 
 
+def run_macro_agent(question: str) -> dict:
+    """The macro agent (imported lazily: loading it also loads the embedding model)."""
+    from wealthai.agent.macro import run_macro_agent as _run
+
+    return _run(question)
+
+
+def macro_agent(state: State) -> dict:
+    macro = run_macro_agent(state["question"])
+    trace = [f"macro_agent({state['question']!r})"] + [f"    {step}" for step in macro["trace"]]
+    return {"macro": macro, "answer": macro["answer"], "answerable": macro["answerable"], "trace": trace}
+
+
 def sql_gen(state: State) -> dict:
     feedback = f"Your previous query failed: {state['sql_error']}. Fix it." if state.get("sql_error") else ""
     prompt = SQL_PROMPT.format(schema=SCHEMA_DESCRIPTION, question=state["question"], feedback=feedback)
@@ -276,7 +297,7 @@ def after_guard(state: State) -> str:
 
 
 def after_route(state: State) -> str:
-    return {"kid": "kid_agent", "portfolio": "sql_gen", "both": "sql_gen",
+    return {"kid": "kid_agent", "macro": "macro_agent", "portfolio": "sql_gen", "both": "sql_gen",
             "advice": "refuse", "out_of_scope": "out_of_scope"}[state["route"]]
 
 
@@ -307,14 +328,15 @@ def after_verify(state: State) -> str:
 def build_graph():
     g = StateGraph(State)
     for name, fn in [("guard", guard), ("refuse", refuse), ("route", route), ("out_of_scope", out_of_scope),
-                     ("kid_agent", kid_agent), ("sql_gen", sql_gen), ("sql_run", sql_run), ("sql_failed", sql_failed),
+                     ("kid_agent", kid_agent), ("macro_agent", macro_agent), ("sql_gen", sql_gen), ("sql_run", sql_run), ("sql_failed", sql_failed),
                      ("kid_question", kid_question), ("compose", compose), ("verify_final", verify_final),
                      ("abstain", abstain)]:
         g.add_node(name, fn)
     g.add_edge(START, "guard")
     g.add_conditional_edges("guard", after_guard, {"refuse": "refuse", "route": "route"})
-    g.add_conditional_edges("route", after_route, {"kid_agent": "kid_agent", "sql_gen": "sql_gen",
-                                                   "refuse": "refuse", "out_of_scope": "out_of_scope"})
+    g.add_conditional_edges("route", after_route, {"kid_agent": "kid_agent", "macro_agent": "macro_agent",
+                                                   "sql_gen": "sql_gen", "refuse": "refuse",
+                                                   "out_of_scope": "out_of_scope"})
     g.add_edge("sql_gen", "sql_run")
     g.add_conditional_edges("sql_run", after_sql_run, {"sql_gen": "sql_gen", "sql_failed": "sql_failed",
                                                        "kid_question": "kid_question", "compose": "compose"})
@@ -322,7 +344,7 @@ def build_graph():
     g.add_conditional_edges("kid_agent", after_kid_agent, {END: END, "compose": "compose"})
     g.add_conditional_edges("compose", after_compose, {"verify_final": "verify_final", END: END})
     g.add_conditional_edges("verify_final", after_verify, {"compose": "compose", "abstain": "abstain", END: END})
-    for terminal in ("refuse", "out_of_scope", "sql_failed", "abstain"):
+    for terminal in ("refuse", "out_of_scope", "macro_agent", "sql_failed", "abstain"):
         g.add_edge(terminal, END)
     return g.compile()
 
@@ -340,7 +362,7 @@ def run_multi(question: str) -> dict:
     if _graph is None:
         _graph = build_graph()
     s = _graph.invoke({"question": question})
-    kid = s.get("kid") or {}
+    kid = s.get("kid") or s.get("macro") or {}
     contexts = list(kid.get("contexts", []))
     sources = list(kid.get("sources", []))
     sections = list(kid.get("sections", []))
@@ -352,7 +374,7 @@ def run_multi(question: str) -> dict:
         "question": question,
         "answer": s["answer"],
         "answerable": s["answerable"],
-        "citations": kid.get("citations", []) if s.get("route") == "kid" else [],
+        "citations": kid.get("citations", []) if s.get("route") in ("kid", "macro") else [],
         "contexts": contexts,
         "sources": sources,
         "sections": sections,

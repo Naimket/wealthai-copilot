@@ -14,12 +14,14 @@ TIMEOUT_SECONDS = 180  # the agent makes several sequential LLM calls
 EXAMPLES = [
     "What are the ongoing costs of the Vanguard FTSE All-World UCITS ETF?",
     "Which of the iShares funds is cheapest?",
+    "What did the SNB decide on 24 September 2026 and what was CPI inflation in August?",
     "How many clients do we have per risk profile?",
     "Which funds does Alice Brunner hold and what are their ongoing costs?",
     "Should I sell Alice Brunner's Vanguard position?",
 ]
 ROUTE_LABELS = {
     "kid": "Fund documents (KIDs)",
+    "macro": "SNB publications (macro)",
     "portfolio": "Client portfolios (SQL)",
     "both": "Portfolios + KIDs",
     "advice": "Refused: investment advice",

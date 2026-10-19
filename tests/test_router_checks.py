@@ -97,7 +97,7 @@ ITEMS = [json.loads(line) for line in SET.read_text(encoding="utf-8").splitlines
 def test_golden_set_is_well_formed():
     ids = [i["id"] for i in ITEMS]
     assert len(ids) == len(set(ids)) >= 40
-    valid = {"kid", "portfolio", "both", "advice", "out_of_scope"}
+    valid = {"kid", "macro", "portfolio", "both", "advice", "out_of_scope"}
     for i in ITEMS:
         assert {"id", "category", "question", "routes"} <= i.keys()
         assert set(i["routes"]) <= valid and i["question"].strip()

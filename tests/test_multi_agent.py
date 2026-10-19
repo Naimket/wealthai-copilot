@@ -18,6 +18,17 @@ KID_RESULT = {
 }
 
 
+MACRO_RESULT = {
+    "answer": "The SNB left the policy rate at 0% on 24 September 2026.",
+    "answerable": True,
+    "citations": [1],
+    "contexts": ["[SNB Monetary policy assessment of 24 September 2026 | PDF p.1] policy rate 0%"],
+    "sources": ["snb_monetary_policy_assessment_2026_09_24.pdf"],
+    "sections": ["SNB Monetary policy assessment of 24 September 2026"],
+    "trace": ["guard", "rewrite", "retrieve", "grade", "generate", "verify"],
+}
+
+
 class FakeLLM:
     """Returns the scripted objects for each schema, in order; the last one repeats."""
 
@@ -49,6 +60,14 @@ def setup(monkeypatch, tmp_path):
         return dict(KID_RESULT)
 
     monkeypatch.setattr(multi, "run_kid_agent", fake_kid)
+    macro_calls = []
+
+    def fake_macro(question):
+        macro_calls.append(question)
+        return dict(MACRO_RESULT)
+
+    monkeypatch.setattr(multi, "run_macro_agent", fake_macro)
+    monkeypatch.setattr(multi, "macro_calls", macro_calls, raising=False)
 
     def install(**scripts):
         llm = FakeLLM(**scripts)
@@ -113,6 +132,36 @@ def test_kid_route_passes_the_question_through_and_returns_its_answer(setup):
     assert out["citations"] == [1] and out["sql"] == ""
     assert llm.calls == ["Route"]  # no SQL, no compose, no verify
     assert any("kid_agent" in step for step in out["trace"])
+
+
+# --- macro route ------------------------------------------------------------------------------------
+
+def test_macro_route_passes_the_question_through_and_returns_its_answer(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("macro")])
+    out = multi.run_multi("What did the SNB decide on 24 September 2026?")
+    assert multi.macro_calls == ["What did the SNB decide on 24 September 2026?"]
+    assert out["route"] == "macro" and out["answer"] == MACRO_RESULT["answer"] and out["answerable"]
+    assert out["citations"] == [1] and out["sql"] == ""
+    assert out["sources"] == MACRO_RESULT["sources"] and out["contexts"] == MACRO_RESULT["contexts"]
+    assert kid_calls == [] and llm.calls == ["Route"]  # no SQL, no compose, no KID agent
+    assert any("macro_agent" in step for step in out["trace"])
+
+
+def test_macro_route_keeps_an_honest_abstention(setup, monkeypatch):
+    install, _ = setup
+    install(Route=[R("macro")])
+    abstained = dict(MACRO_RESULT, answer=ABSTAIN_MSG, answerable=False, citations=[], contexts=[], sources=[])
+    monkeypatch.setattr(multi, "run_macro_agent", lambda question: abstained)
+    out = multi.run_multi("What will the SNB policy rate be in 2030?")
+    assert out["route"] == "macro" and out["answer"] == ABSTAIN_MSG and not out["answerable"]
+
+
+def test_advice_about_macro_is_still_refused_before_routing(setup):
+    install, _ = setup
+    llm = install(Route=[R("macro")])
+    out = multi.run_multi("Should I buy Swiss bonds given the latest SNB decision?")
+    assert out["answer"] == REFUSE_MSG and llm.calls == [] and multi.macro_calls == []
 
 
 # --- portfolio-only route ---------------------------------------------------------------------------
