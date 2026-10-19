@@ -81,6 +81,22 @@ Questions: factual, comparative, hard (paraphrases, synonyms, cross-document), a
 Faithfulness and answer relevancy are measured with [Ragas](https://docs.ragas.io). Ragas only scores questions that
 were answered, so wrongful abstentions are tracked with deterministic checks against known KID values.
 
+**Blind test set** (52 new questions, written from the KIDs and frozen in git before the first run; agent, model alias
+`gemini-flash-lite-latest`, first run, no tuning):
+
+| Question type | Answer correct |
+|---|---|
+| Factual (33) | 33/33 |
+| Hard: French, paraphrase, loose names (5) | 5/5 |
+| Unanswerable and advice traps (10) | 10/10 abstained or refused |
+| Comparative / cross-document (4) | 1/4 |
+| **Total** | **49/52** |
+
+All three misses are cross-document questions: the query rewriter replaced "total costs" with "ongoing costs", and the
+grader asked for every fund to appear on a "which KID is addressed to Switzerland" question. The prompts were then
+changed, so these 52 questions are no longer blind for those cases; a separate 14-question holdout checks the fix
+([details](docs/results.md)).
+
 **Multi-source router** (40 questions, Gemini 3.1 Flash Lite; ground truth computed by SQL, no LLM judge):
 
 | | Routing | Answer correct |
@@ -180,7 +196,8 @@ docs/            results log and agent graphs
 
 ## Roadmap
 
-- [ ] Blind test set (new questions, frozen before running) and repeated runs to report variance
+- [x] Blind test set (52 questions, frozen before running), first agent run: 49/52
+- [ ] Single-pass baselines on the blind set and repeated runs to report variance
 - [x] Ragas scores for the agent (development set)
 - [ ] Agent vs single-pass with the same terminology glossary, on the blind set
 - [ ] Macro-report source (central bank publications) and a `macro` route

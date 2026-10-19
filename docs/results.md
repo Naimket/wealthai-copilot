@@ -144,3 +144,43 @@ run (25 clients, 138 holdings), including the prompt-injection items.
 - Measured with Gemini 3.1 Flash Lite because the 3.5 Flash Lite daily quota was exhausted; the KID tables above were
   measured with Gemini flash-lite (3.5). Do not compare the two sets of numbers across models.
 
+## Phase 7 - blind test set (52 questions, agent, `gemini-flash-lite-latest`)
+
+The set (`data/golden/blind_set.jsonl`) was written from the five KIDs after the development work and committed
+before any system was run on it. Topics deliberately differ from the dev set: scenario-table amounts in USD,
+total costs over 1 and 5 years, entry/exit/performance fees, objectives and replication, depositary, manufacturer,
+ISIN, Swiss representative and paying agent, complaints, two questions in French, and 10 near-miss traps.
+Every answer pattern was checked against the KID text.
+
+**Run 1 (first and only run before any fix):**
+
+| Question type | Retrieval hit | Answer correct |
+|---|---|---|
+| Factual (33) | 33/33 | 33/33 |
+| Hard (5) | 5/5 | 5/5 |
+| Comparative (4) | - | 1/4 |
+| Unanswerable (10) | - | 10/10 correct abstention |
+| Total | | 49/52 (94%) |
+
+Agent behaviour: 1 refused as advice, 13 retried retrieval, 10 abstained (all 10 traps), 0 regenerations after verify.
+
+### The three misses (all comparative)
+- **b39, b40** ("lowest / highest total costs over 5 years"): the rewriter turned the question into "ongoing costs
+  Management fees and other administrative or operating costs", so the "Costs over time" table never reached the
+  generator. In b40 the grader accepted the passages (ongoing costs are a related figure) and the generator then said
+  the 5-year total was not in the documents; in b39 the grader correctly rejected them twice and the agent abstained.
+  Cause: the rewrite vocabulary map had no entry for "total costs", and the grader did not check that the figure was
+  the one asked for.
+- **b42** ("which fund's KID is addressed to investors in Switzerland"): retrieval found the right chunk (the Xtrackers
+  title "Key Information Document for Investors in Switzerland"), but the grader rejected it because the other funds
+  were missing. Cause: the "every fund must appear" rule is right for rankings of figures and wrong for a property
+  lookup. The question is also somewhat ambiguous (every KID mentions a Swiss representative); the title is the only
+  literal match.
+
+### Fix and how it is checked
+Prompt-only changes in `agent/graph.py`: a rewrite mapping for total costs and entry/exit fees plus a rule to keep
+distinguishing words; two grader rules (the passages must contain the same kind of figure as asked; property lookups
+need only the fund that has the property). Because the fix was designed after seeing these failures, re-running the 52
+questions measures regression, not generalisation. Generalisation is checked on a separate 14-question holdout
+(`data/golden/holdout_set.jsonl`: 12 cross-document questions of the same two kinds plus 2 traps), written before the
+fixed agent was run on it. Results will be added here with the model stated.

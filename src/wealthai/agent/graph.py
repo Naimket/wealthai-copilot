@@ -45,12 +45,20 @@ KIDs use fixed vocabulary. Map the user's words to it when relevant:
 - holding period -> "Recommended holding period"
 - scenarios, returns -> "Performance Scenarios" (favourable, moderate, unfavourable, stress)
 - what if the provider fails -> "unable to pay out"
+- total costs, all costs, cost in USD over N years, cheapest once everything is included -> "Costs over time" "Total costs" "If you exit after 1 year" "If you exit after 5 years" "Annual cost impact" (this is NOT the ongoing-costs line)
+- entry fee, exit fee -> "Entry costs" "Exit costs"
 Rules: keep every fund name EXACTLY as the user wrote it; do not add facts or numbers; do not answer.
+Keep the words that distinguish the question (for example "total", "stress", "Switzerland", "depositary"); never replace them with a more general term.
 {feedback}
 Question: {question}"""
 
 GRADE_PROMPT = """Decide whether the passages contain what is needed to answer the question COMPLETELY.
 - For comparisons, rankings, counts or "which funds" questions, EVERY fund involved must appear with its figure.
+- The passages must contain the SAME kind of figure the question asks for: ongoing costs are not total costs,
+  and transaction costs are not ongoing costs. A related figure does not make the passages relevant.
+- If the question asks which fund or KID has a property stated in the text (for example which KID is addressed to
+  a country, which fund has a given depositary or manufacturer), relevant=true as soon as a passage shows a fund
+  with that property; the other funds do not need to appear. This does not apply to rankings of figures.
 - If the question asks for something a KID never contains (live prices, news, macro data, assets under
   management, past performance of a different fund, a fund that is not in the passages), relevant=false.
 - If the question refers to a fund loosely (e.g. "the MSCI World ETF") and the passages cover EVERY fund that
