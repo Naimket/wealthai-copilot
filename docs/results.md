@@ -203,6 +203,23 @@ Cause: per-fund balancing only runs when the question names funds. "Which fund .
 the whole library decides whether every fund is represented. Relying on the grader to notice a missing fund is
 fragile; the guarantee should come from the retrieval layer.
 
+### Holdout re-run after the coverage fix (14 questions, current code, `gemini-flash-lite-latest`, run 2, 2026-10-20)
+
+**14/14** (comparative 12/12, unanswerable 2/2). h02, the miss of the first run, now retrieves 10 chunks covering all five
+funds (trace: `retrieve k=5 -> 10 chunks (all funds)`) and ranks them correctly. Caveats: h02 is no longer held out, and
+the fix also changes retrieval for the other cross-fund questions, so the other 13 passes are the real regression check.
+One run, so a one-question difference is within run-to-run noise.
+
+A first attempt at this check replayed the old cache (`answers_agent_holdout.jsonl`, 2026-10-19) and made no model calls;
+it showed the old miss again. Re-running a set after a code change needs a new cache (`--run N` or `--fresh`).
+
+**The verification step fired on real drafts for the first time.** In h05 it rejected (per its stated reason) a draft that named the fund with the
+lowest amount back as iShares S&P 500 (3,740 USD) when Xtrackers gives 3,720 USD; in h07 it rejected a Vanguard figure of
+USD 11,480 given as the unfavourable scenario (it is the moderate one; the unfavourable value is 7,940). Both
+regenerated answers were accepted by the verifier and passed the deterministic checks. I have not independently
+re-derived the two rejections from the KID text, and I did not see the discarded drafts, so this shows the step working
+in two cases, not a measured detection rate; the stress test in Phase 9 is the controlled measurement.
+
 ### Second fix: deterministic coverage for cross-fund questions
 `retrieval.is_cross_fund()` flags questions that rank or compare funds without naming any, and then `retrieve(...,
 all_funds=True)` treats the whole library as named: every fund gets its own share (at least 2 chunks each), so a

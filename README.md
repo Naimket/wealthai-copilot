@@ -102,7 +102,10 @@ were answered, so wrongful abstentions are tracked with deterministic checks aga
 All three misses are cross-document questions: the query rewriter replaced "total costs" with "ongoing costs", and the
 grader asked for every fund to appear on a "which KID is addressed to Switzerland" question. The prompts were then
 changed, so these 52 questions are no longer blind for those cases; a separate 14-question holdout checks the fix
-([details](docs/results.md)).
+([details](docs/results.md)). That holdout scored 13/14 on its first run; after a deterministic coverage fix for
+"which fund ..." questions (designed on the one miss, h02), a fresh run with the current code scored **14/14** (h02 now
+retrieves all five funds). In that run the verification step fired twice on real drafts (h05, h07), each time with a
+specific reason, and the regenerated answers passed the checks; h02 is no longer a held-out case.
 
 **Macro source: SNB publications of September 2026** (whole multi-source agent, deterministic checks; a question is
 correct only if it was routed to `macro` and the answer contains the expected fact):
@@ -254,7 +257,9 @@ docs/            results log, agent graphs, cloud deployment notes (design only)
 - [x] Verification stress test (`scripts/eval_verifier.py`): 9/9 deliberately wrong answers flagged, 0/7 false alarms (small and easy set, see results)
 - [ ] A harder verifier test: near-miss errors (rounding, wrong fund in a list, wrong period) and more than one case per kind
 - [x] KID-first route for questions that need KID facts before the SQL: both multi-hop items pass on the third version (development result; each earlier run failed on a different bug)
-- [ ] Full router re-run with one agent version, and KID regression runs after the retrieval change
+- [x] Full router re-run with one agent version: 45/45 (development set)
+- [x] KID holdout regression after the retrieval change: 14/14
+- [ ] KID regression on the development (55) and blind (52) sets after the retrieval change (`--run 2`)
 - [ ] Larger KID library, including Swiss-domiciled products
 - [x] Dockerfile and docker-compose, built and smoke-tested in CI
 - [x] Deployment notes for AWS or GCP: [docs/deployment.md](docs/deployment.md) (design only, not deployed)
