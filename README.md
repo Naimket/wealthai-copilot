@@ -133,6 +133,7 @@ a pass until I checked the labels against the text. The two misses of the clean 
 | Same two items after adding validated instrument selection (second version) | 45/45 | 43/45 |
 | Same two items after the compose/verify and retry fixes (third version; other 43 answers from earlier versions) | 45/45 | 45/45 |
 | **Full run with one agent version** (commit 95dd98c, all 45 answers; mean 17.6 s per question) | 45/45 | **45/45** |
+| Routing-only check on the final router prompt (one call per question, no answers generated; after the multi-hop fixes) | 45/45 | not re-run |
 
 The three first-run misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the
 cheapest fund"; one was a safe refusal, the other a list with wrong and missing clients), and one "current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
@@ -272,7 +273,8 @@ docs/            results log, agent graphs, cloud deployment notes (design only)
 - [x] Verification stress test (`scripts/eval_verifier.py`): 9/9 deliberately wrong answers flagged, 0/7 false alarms (small and easy set, see results)
 - [ ] A harder verifier test: near-miss errors (rounding, wrong fund in a list, wrong period) and more than one case per kind
 - [x] KID-first route for questions that need KID facts before the SQL: both multi-hop items pass on the third version (development result; each earlier run failed on a different bug)
-- [x] Full router re-run with one agent version: 45/45 (development set)
+- [x] Full router run with one agent version: 45/45 (development set; code of commit 95dd98c)
+- [ ] Full router re-run on the final code (the router, selection, SQL and compose prompts changed after that run; only the routing was re-checked)
 - [x] KID holdout regression after the retrieval change: 14/14
 - [ ] KID regression on the development (55) and blind (52) sets after the retrieval change (`--run 2`)
 - [ ] Larger KID library, including Swiss-domiciled products
