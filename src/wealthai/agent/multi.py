@@ -25,6 +25,7 @@ The SQL is written by the LLM but runs through tools.sql (read-only, whitelisted
 multi-source question is checked against ALL the evidence (database rows + KID answer + KID passages).
 """
 import operator
+import re
 from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -60,11 +61,15 @@ Sources:
 Choose exactly one route:
 - kid: needs only facts from the KIDs; no client is involved.
 - macro: needs only facts from the SNB publications (monetary policy, Swiss or foreign economy, inflation, rates, franc, tariffs); no fund or client is involved.
-- portfolio: needs only client data (who holds what, values, allocations, rankings or counts of clients).
+- portfolio: needs only client data (who holds what, values, allocations, rankings or counts of clients, including which
+  holdings have a KID in the knowledge base and which do not).
 - both: needs client data AND KID facts about funds the question already points to through a client (for example the
   costs or risk of the funds a client holds).
-- kid_first: KID facts decide WHICH funds qualify (the cheapest, the lowest risk, costs above a threshold) and the
-  question then asks which clients hold them.
+- kid_first: KID facts decide WHICH funds qualify and the question then asks about the clients that hold them. The funds
+  are described by a KID attribute (ongoing costs, risk class, holding period) instead of, or besides, their names, in any
+  phrasing: the cheapest or most expensive, the second-highest, both extremes, an exact value ("costs of exactly 0.12%"),
+  a threshold or a range, or "none of the funds with ...". A question that names one fund and describes another by a cost
+  is kid_first too. Choose kid_first, not out_of_scope, for all of these.
 - advice: asks what to buy, sell or choose, or whether something is suitable or recommended for a client.
 - out_of_scope: anything else (market news, live prices, general chat). A question about a macro figure that the
   SNB publications could contain is macro, even if the answer may turn out not to be there.
@@ -93,8 +98,10 @@ for example "What are the ongoing costs of each of the five funds?". Ask only fo
 Advisor question: {question}"""
 
 SELECT_PROMPT = """The advisor asked the question below. The KID answer lists a fact for each fund.
-Choose the instruments that satisfy the condition in the question (for example the lowest cost, or a cost above a
-threshold), comparing the numbers yourself. Return their names EXACTLY as written in the list of instruments.
+Choose the instruments that satisfy the FUND condition in the question (for example the lowest cost, the second-highest
+cost, a cost above a threshold, an exact cost), comparing the numbers yourself, and include any fund the question names.
+Select the funds the condition describes even when the question asks for clients who hold ALL of them or NONE of them:
+never select the complement. Return their names EXACTLY as written in the list of instruments.
 If the KID answer does not give the fact for the funds, return an empty list.
 
 Advisor question: {question}
@@ -127,8 +134,10 @@ SQL THAT PRODUCED IT (its WHERE, GROUP BY and LIMIT define what each number or r
 {kid}
 
 Rules:
-- When FUNDS THAT QUALIFY is given, the condition in the question (the lowest cost, costs above a threshold, ...) is
-  established by the KID ANSWER; do not refuse it for lack of cost data in the database. Report the clients in the database result.
+- When FUNDS THAT QUALIFY is given, the condition in the question (the lowest, highest or second-highest cost, both
+  extremes, costs above a threshold, an exact value, ...) is established by the KID ANSWER; do not refuse it for lack of
+  cost data in the database, and do not say the KID ANSWER fails to rank the funds: the ranking was done from its figures.
+  State which funds qualify and their figures, and report the clients in the database result.
 - Never use outside knowledge and never guess a number. Do the arithmetic only from the figures shown.
 - If the database result has no rows, say no matching client data was found.
 - For an instrument whose kid_source is empty, say that no KID is available in the knowledge base for it.
@@ -136,7 +145,7 @@ Rules:
 - Do not give investment advice or recommendations. Be concise and name the client and fund each figure belongs to.
 - Write amounts as CHF with thousands separators (for example CHF 1,494,694).
 - Describe each figure by what the query selected: a count produced with WHERE city = 'Geneva' is the number of clients in Geneva, even if the result table shows only the number.
-- If the question asks for a ranking or an extreme (lowest, highest, cheapest, most, best) and the evidence does not directly establish it, say that the available data does not allow that conclusion. Never answer about a different subset than the one asked (for example a single row picked by LIMIT 1).
+- If the question asks for a ranking or an extreme (lowest, highest, cheapest, most, best) and the evidence does not directly establish it, say that the available data does not allow that conclusion (this does not apply when FUNDS THAT QUALIFY is given: the ranking is then established). Never answer about a different subset than the one asked (for example a single row picked by LIMIT 1).
 - If the question asks which clients or funds, name every one in the database result; never shorten the list.
 - Set answerable=false only if the evidence cannot answer the question.
 {feedback}
@@ -169,7 +178,7 @@ ANSWER: {answer}"""
 
 
 class Route(BaseModel):
-    route: str = Field(description="One of: kid, macro, portfolio, both, advice, out_of_scope")
+    route: str = Field(description="One of: kid, macro, portfolio, both, kid_first, advice, out_of_scope")
     reason: str = Field(default="", description="One short sentence")
 
 
@@ -299,13 +308,23 @@ def sql_gen(state: State) -> dict:
         kid_facts = ("KID FACTS (from the fund documents): " + _kid_text(state) + "\n"
                      f"The funds that qualify for the question, already decided from these facts: {names}.\n"
                      f"Select the DISTINCT clients holding them and filter with instruments.isin IN ({isins}); do not filter by name\n"
-                     "with LIKE and do not apply any other cost or risk condition. Return client names only, one row per client.\n")
+                     "with LIKE and do not apply any other cost or risk condition. Return client names only, one row per client.\n"
+                     "If the question asks for clients who hold ALL (or BOTH) of these funds, require every one of them (for example "
+                     "GROUP BY clients.client_id HAVING COUNT(DISTINCT instruments.isin) = number of funds). If it asks for clients who "
+                     "hold NONE of them, use clients.client_id NOT IN (SELECT holdings.client_id ... WHERE instruments.isin IN (...)). "
+                     "Otherwise a client qualifies if it holds ANY of them.\n")
     prompt = SQL_PROMPT.format(schema=SCHEMA_DESCRIPTION, question=state["question"], kid_facts=kid_facts, feedback=feedback)
     out = generate(prompt, schema=SqlQuery)
     return {"sql": out.sql.strip(), "sql_attempts": state.get("sql_attempts", 0) + 1, "trace": [f"sql_gen -> {out.sql.strip()!r}"]}
 
 
+_NUMERIC_LIKE = re.compile(r"\blike\s+(?:lower\s*\(\s*)?'%?\s*\d[\d.,]*\s*%?'", re.I)
+
+
 def sql_run(state: State) -> dict:
+    if _NUMERIC_LIKE.search(state["sql"]):  # costs and risk classes are not in the database: such a filter can only be invented
+        msg = "the query filters a text column by a number (for example LIKE '%0.12%'); fund costs and risk classes are not in the database"
+        return {"sql_error": msg, "trace": [f"sql_run error: {msg}"]}
     try:
         result = run_query(state["sql"], db_path=DB_PATH)
     except SqlToolError as exc:

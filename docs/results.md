@@ -439,3 +439,60 @@ to see, and a short passage per case (the real node sees up to 8 chunks). Not te
 changes the second decimal, one wrong fund in a list of five), long contexts, and errors of omission. Earlier findings
 still stand: the verifier did not catch an incomplete list in the kid_first route (r27), which is why a completeness
 rule was added to the multi-source verifier. Run on 2026-10-20 with 16 calls.
+
+
+## Phase 10 - unseen multi-hop questions (`--set multihop`, 10 questions, `gemini-flash-lite-latest`)
+
+The router set's 45/45 is a development result, and its two multi-hop items (r26, r27) were fixed one by one. To measure
+whether the KID-first route generalises, I wrote 10 new multi-hop questions (a KID fact decides which funds qualify, then
+SQL finds the clients), froze them in git, and ran them once. Ground truth is an oracle SQL query per question; list
+answers also fail if they name a client outside the oracle result (`exact_names`).
+
+**First run: 5/10 passed (routed correctly 6/10).** Passed: n01 highest cost, n02 cost below 0.10%, n05 cost between 0.10%
+and 0.15%, n06 lowest cost within one risk profile, n07 total CHF value in the cheapest fund. Failed:
+
+| Id | Question type | What happened | Cause (from the trace) |
+|---|---|---|---|
+| n03 | second-highest cost | declined as out of scope | The `route` field description omitted `kid_first`; the model's reason: "kid_first is not in the allowed route list". A bug of mine. |
+| n08 | cheapest and most expensive fund | declined as out of scope | Same bug. |
+| n04 | exactly 0.12% | routed to `portfolio`; SQL `kid_source LIKE '%0.12%'`; answer "No matching client data was found." | The router did not see a KID-first question; the SQL step invented a filter and the answer was a confident wrong "no data". The verifier accepted it because it was faithful to an empty result. |
+| n09 | named fund + a fund with cost 0.07% | routed to `portfolio`; SQL `name LIKE '%0.07%'`; same wrong answer | Same. |
+| n10 | clients holding none of the funds above 0.15% | routed correctly, answered 9 instead of 8 | The instrument selection chose the complement (the funds at or below 0.15%) and the SQL then excluded their holders: a double negation. |
+
+So the route that r26 and r27 had been tuned for works on the same kind of question (highest, lowest, threshold, range,
+sum, one profile), and breaks on ordinals, exact values, "both extremes", mixed named/described funds and negation.
+Two failures were safe declines; two were wrong answers stated with confidence, which is the worse kind.
+
+**Fixes made after seeing these results** (so the 10 are now a development set; the 5/10 above is the clean figure):
+1. the `route` field description lists every route, with a test that checks it against `ROUTES`;
+2. the router prompt describes `kid_first` by phrasings (second-highest, exact value, both extremes, "none of");
+3. the instrument-selection prompt selects the funds the condition describes and never the complement, and includes funds
+   the question names;
+4. the SQL step is told how to treat "all/both" (every fund required) and "none" (`NOT IN`);
+5. a deterministic guard rejects any SQL that filters a text column by a number (`LIKE '%0.12%'`): costs are not in the database,
+   so such a filter can only be invented. The query is retried once with the error and, if it repeats, the answer is a safe
+   message instead of "no data".
+Six new tests cover these (162 in total).
+
+**A regression caught by the routing-only check.** My first version of fix 2 also added to the `portfolio` description that
+costs and risk are "not in the database". The routing check (`eval_router.py --route-only`, one call per question) then
+showed r25 ("Which of Adrien Rochat's holdings do not have a KID in the knowledge base?"), which had routed correctly in
+every earlier run, going to `out_of_scope`; repeated 6 times it did so 6/6, with reasons such as "the portfolio database does
+not contain information about KID availability". So the sentence made the router distrust the database for anything
+KID-related. I removed it and replaced it with an explicit statement that the portfolio route includes which holdings have
+or lack a KID. The other 44 router items and all 10 multi-hop items routed as accepted on that check.
+
+**Re-run of the five failed items after the first round of fixes (development result, same day).** Routing: 10/10 to
+`kid_first` (and the other 45 router items still routed as accepted after the r25 correction, 45/45 on the routing check).
+Answers: **8/10**. n04 (exact value), n09 (named fund plus a cost) and n10 (negation, now 8) pass. n03 and n08 now route
+correctly and the SQL is right (n03 selects the EM IMI fund, n08 requires both funds with `HAVING COUNT(DISTINCT ...)`), but the
+final answer is "the available data does not allow that conclusion": the generic ranking rule of the compose prompt fires
+although the qualifying funds were already chosen from the KID figures (the same mechanism as r26 in Phase 6, which I had
+only exempted for the "lowest cost" wording). Second round: the exemption now covers rankings, extremes, exact values and
+thresholds, and the prompt forbids saying that the KID answer "does not rank" the funds. One more test (163 in total).
+
+**Re-run of n03 and n08 after the second round: both pass, so the set shows 10/10.** This 10/10 is a composite of three
+agent versions (n01, n02, n05, n06, n07 from the original run; n04, n09, n10 after round 1; n03 and n08 after round 2) on
+questions that were used to design the fixes. It shows that each failure is fixed, not that multi-hop questions
+generalise: that needs a fresh set of unseen questions, run once on the final code, plus a full router re-run because the
+router, selection, SQL and compose prompts all changed since the last full run. Both are still to do.

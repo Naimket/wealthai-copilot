@@ -372,3 +372,60 @@ def test_other_routes_have_no_qualifying_block(setup):
                   Verification=[V(True)])
     multi.run_multi("How many clients do we have?")
     assert all("chosen from the KID ANSWER by comparing" not in p for s, p in llm.prompts if s in ("FinalAnswer", "Verification"))
+
+
+# --- fixes after the unseen multi-hop run (n03, n04, n08, n09, n10) -----------------------------------------
+
+def test_route_schema_lists_every_route():
+    """n03 and n08 were declined because the field description omitted kid_first ('not in the allowed route list')."""
+    description = multi.Route.model_fields["route"].description
+    assert all(route in description for route in multi.ROUTES)
+
+
+def test_route_prompt_describes_kid_first_phrasings():
+    for phrase in ("second-highest", "exactly 0.12%", "both extremes", "none of the funds"):
+        assert phrase in multi.ROUTE_PROMPT
+    assert "which\n  holdings have a KID in the knowledge base" in multi.ROUTE_PROMPT   # r25: the portfolio route must stay reachable for it
+
+
+def test_sql_filtering_a_text_column_by_a_number_is_rejected_and_retried(setup):
+    install, _ = setup
+    invented = "SELECT c.name FROM clients c JOIN holdings h ON c.client_id = h.client_id JOIN instruments i ON h.instrument_id = i.instrument_id WHERE i.kid_source LIKE '%0.12%'"
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=invented), multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("10 clients.")], Verification=[V(True)])
+    out = multi.run_multi("List the clients who hold a fund with ongoing costs of exactly 0.12%.")
+    assert llm.count("SqlQuery") == 2 and out["sql"] == GOOD_SQL
+    assert any("filters a text column by a number" in step for step in out["trace"])
+
+
+def test_two_invented_numeric_filters_end_in_a_safe_message_not_a_confident_empty_answer(setup):
+    install, _ = setup
+    invented = "SELECT name FROM instruments WHERE lower(name) LIKE lower('%0.07%')"
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=invented)])
+    out = multi.run_multi("Which clients hold a fund with ongoing costs of 0.07%?")
+    assert out["answer"] == multi.SQL_FAILED_MSG and not out["answerable"] and llm.count("FinalAnswer") == 0
+
+
+def test_numeric_like_guard_leaves_normal_name_filters_alone():
+    assert not multi._NUMERIC_LIKE.search("SELECT 1 FROM instruments WHERE name LIKE '%S&P 500%'")
+    assert not multi._NUMERIC_LIKE.search("SELECT 1 FROM clients WHERE lower(clients.name) LIKE lower('%alice%')")
+    assert multi._NUMERIC_LIKE.search("SELECT 1 FROM instruments WHERE kid_source LIKE '%0.12%'")
+    assert multi._NUMERIC_LIKE.search("SELECT 1 FROM instruments WHERE lower(name) LIKE lower('%0.07%')")
+
+
+def test_selection_and_sql_prompts_carry_the_quantifier_rules(setup):
+    install, _ = setup
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], InstrumentSelection=[SEL("Test World ETF")],
+                  SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA()], Verification=[V(True)])
+    multi.run_multi("How many clients hold none of the funds with ongoing costs above 0.15%?")
+    select_prompt = [p for s, p in llm.prompts if s == "InstrumentSelection"][0]
+    sql_prompt = [p for s, p in llm.prompts if s == "SqlQuery"][0]
+    assert "never select the complement" in select_prompt
+    assert "HAVING COUNT(DISTINCT instruments.isin)" in sql_prompt and "NOT IN (SELECT holdings.client_id" in sql_prompt
+
+
+def test_compose_prompt_does_not_let_the_ranking_rule_override_the_qualifying_funds():
+    """n03 and n08: correct SQL, then 'the available data does not allow that conclusion' from the generic ranking rule."""
+    prompt = multi.COMPOSE_PROMPT
+    assert "second-highest cost, both\n  extremes" in prompt and "do not say the KID ANSWER fails to rank the funds" in prompt
+    assert "(this does not apply when FUNDS THAT QUALIFY is given: the ranking is then established)" in prompt

@@ -96,4 +96,13 @@ def check_item(item: dict, result: dict, db_path=DEFAULT_DB) -> dict:
                     answer_ok = False
                     reasons.append(f"missing ongoing cost {cost} for {t!r}")
 
+    if item.get("exact_names") and mode:
+        # List questions: the answer must not name a client the oracle query does not return (extra clients are errors too).
+        expected = {norm(t) for t in _oracle_cells(item["oracle_sql"], db_path)[1]}
+        everyone = [str(r[0]) for r in run_query("SELECT name FROM clients", db_path=db_path).rows]
+        for name in everyone:
+            if norm(name) in a_norm and norm(name) not in expected:
+                answer_ok = False
+                reasons.append(f"extra client {name!r} not in the expected list")
+
     return {"route_ok": route_ok, "answer_ok": answer_ok, "passed": route_ok and answer_ok, "reasons": reasons}

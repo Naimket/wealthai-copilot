@@ -107,3 +107,33 @@ def test_golden_set_is_well_formed():
 @pytest.mark.parametrize("item", [i for i in ITEMS if "oracle_sql" in i], ids=lambda i: i["id"])
 def test_every_oracle_query_is_accepted_by_the_sql_tool(item, db):
     run_query(item["oracle_sql"], db_path=db)  # must not raise SqlToolError
+
+
+# --- exact_names (list questions: extra clients are errors) and the multi-hop set ----------------------------
+
+def test_exact_names_rejects_an_extra_client(db):
+    first, second = (r[0] for r in run_query("SELECT name FROM clients ORDER BY client_id LIMIT 2", db_path=db).rows)
+    item = {"routes": ["portfolio"], "expect": "names", "exact_names": True,
+            "oracle_sql": f"SELECT name FROM clients WHERE name = '{first}'"}
+    assert check_item(item, result(f"The client is {first}."), db)["passed"]
+    bad = check_item(item, result(f"The clients are {first} and {second}."), db)
+    assert not bad["passed"] and any(second in r for r in bad["reasons"])
+    lenient = {k: v for k, v in item.items() if k != "exact_names"}
+    assert check_item(lenient, result(f"The clients are {first} and {second}."), db)["passed"]   # old behaviour unchanged
+
+
+MULTIHOP = [json.loads(line) for line in (SET.parent / "multihop_set.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_multihop_set_is_well_formed_and_new():
+    ids = [i["id"] for i in MULTIHOP]
+    assert len(ids) == len(set(ids)) == 10 and not set(ids) & {i["id"] for i in ITEMS}
+    assert not {i["question"] for i in MULTIHOP} & {i["question"] for i in ITEMS}
+    for i in MULTIHOP:
+        assert i["category"] == "multi_hop" and set(i["routes"]) <= {"kid_first", "both"}
+        assert i["expect"] in ("names", "numbers") and i["oracle_sql"].lstrip().upper().startswith("SELECT")
+
+
+@pytest.mark.parametrize("item", MULTIHOP, ids=lambda i: i["id"])
+def test_every_multihop_oracle_is_accepted_by_the_sql_tool(item, db):
+    run_query(item["oracle_sql"], db_path=db)

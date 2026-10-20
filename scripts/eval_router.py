@@ -1,6 +1,11 @@
 """Evaluate the multi-source router on data/golden/router_set.jsonl with deterministic checks (no LLM judge).
 
-Usage: uv run python scripts/eval_router.py [--fresh] [--redo r07,r21]
+Usage: uv run python scripts/eval_router.py [--set router|multihop] [--fresh] [--redo r07,r21] [--route-only] [--only r25,r26] [--repeat N]
+
+--only restricts the run to some items; --repeat N (with --route-only) asks the router N times per item, to tell a flaky
+route from a systematic one. --route-only calls only the routing step (1 LLM call per question, nothing is cached) and compares the route with the accepted
+routes of each item. Use it as a cheap regression check after changing the router prompt: if the routes are unchanged, the
+downstream agents see the same inputs.
 
 Answers are cached per MODEL in data/eval/router_<model>.jsonl, so a run that stops on a quota error can simply
 be repeated, and runs with different models never mix. Always read the printed MODEL line before quoting numbers.
@@ -21,10 +26,14 @@ from wealthai.agent.multi import run_multi  # noqa: E402
 from wealthai.evaluation.router_checks import check_item  # noqa: E402
 from wealthai.tools.sql import run_query  # noqa: E402
 
-GOLDEN = ROOT / "data" / "golden" / "router_set.jsonl"
-CACHE = ROOT / "data" / "eval" / f"router_{re.sub(r'[^A-Za-z0-9.-]+', '_', llm.MODEL)}.jsonl"
+SET = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "router"
+GOLDEN = ROOT / "data" / "golden" / f"{SET}_set.jsonl"
+CACHE = ROOT / "data" / "eval" / f"{SET}_{re.sub(r'[^A-Za-z0-9.-]+', '_', llm.MODEL)}.jsonl"
 
 items = [json.loads(line) for line in GOLDEN.read_text(encoding="utf-8").splitlines() if line.strip()]
+if "--only" in sys.argv:
+    wanted = {x.strip() for x in sys.argv[sys.argv.index("--only") + 1].split(",")}
+    items = [i for i in items if i["id"] in wanted]
 CACHE.parent.mkdir(parents=True, exist_ok=True)
 if "--fresh" in sys.argv and CACHE.exists():
     CACHE.unlink()
@@ -39,12 +48,35 @@ if "--redo" in sys.argv:
         cache.pop(qid.strip(), None)
 
 
+if "--route-only" in sys.argv:
+    from wealthai.agent.multi import route  # noqa: E402
+
+    repeat = int(sys.argv[sys.argv.index("--repeat") + 1]) if "--repeat" in sys.argv else 1
+    bad, total = [], 0
+    for item in items:
+        for _ in range(repeat):
+            try:
+                out = route({"question": item["question"]})
+            except Exception as exc:
+                print(f"Stopping at {item['id']}: {type(exc).__name__}: {str(exc)[:150]}")
+                sys.exit(1)
+            chosen = out["route"]
+            ok = chosen in item["routes"]
+            total += 1
+            print(f"{item['id']} [{item['category']}] -> {chosen} {'ok' if ok else 'NOT ACCEPTED ' + str(item['routes'])}")
+            if not ok:
+                bad.append(item["id"])
+                print(f"    reason: {out['trace'][0][:260]}")
+    print(f"\nMODEL: {llm.MODEL} | set {SET} | routes accepted: {total - len(bad)}/{total} | not accepted: {bad}")
+    sys.exit(0)
+
+
 def db_counts() -> tuple:
     return (run_query("SELECT COUNT(*) FROM clients").rows[0][0], run_query("SELECT COUNT(*) FROM holdings").rows[0][0])
 
 
 counts_before = db_counts()
-print(f"MODEL: {llm.MODEL} | questions: {len(items)} | cached: {len(cache)}\n")
+print(f"MODEL: {llm.MODEL} | set {SET} | questions: {len(items)} | cached: {len(cache)}\n")
 
 for item in items:
     if item["id"] in cache:
