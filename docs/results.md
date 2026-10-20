@@ -360,7 +360,11 @@ Database unchanged (25 clients, 138 holdings).
   Changes made after this second run: the compose and verify prompts now receive the list of qualifying funds with the
   statement that the KID answer establishes the condition, and the per-fund share grows with a widened k (3 chunks per
   fund on a retry). This touches the retrieval layer of the KID agent, which was frozen, so the KID development, blind and
-  holdout sets need a regression run. 140 tests (two new ones on this); not run against the model yet.
+  holdout sets need a regression run. 140 tests (two new ones on this).
+  **Third run (same day): r26 and r27 both pass** (route `kid_first`; database unchanged). This is a development result: the
+  fixes were designed on these two items, and the other 43 answers in the cache come from earlier versions, before the
+  verifier and compose prompts changed for every route. The router set therefore needs a full re-run (`--fresh`) with one
+  agent version before the 45/45 can be quoted.
 - **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
   now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
   I relabelled it after seeing this result, so 42/45 is the as-run score. The macro prompt also now says that a "current"

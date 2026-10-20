@@ -127,6 +127,7 @@ a pass until I checked the labels against the text. The one remaining dev miss i
 | First run with the macro route | 45/45 | 42/45 (43/45 after the r35 item was corrected, see below) |
 | Re-run of the two multi-hop items after adding the KID-first route (first version) | 45/45 | 44/45 |
 | Same two items after adding validated instrument selection (second version) | 45/45 | 43/45 |
+| Same two items after the compose/verify and retry fixes (third version; other 43 answers from earlier versions) | 45/45 | 45/45 |
 
 The three first-run misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the
 cheapest fund"; one was a safe refusal, the other a list with wrong and missing clients), and one "current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
@@ -249,7 +250,8 @@ docs/            results log and agent graphs
 - [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
 - [ ] Clean full run of the macro development set with one agent version; repeated runs for variance
 - [ ] A test that feeds the verification step deliberately wrong answers
-- [ ] KID-first route for questions that need KID facts before the SQL: implemented; r26 and r27 each failed on a different bug, fixes pending a re-run
+- [x] KID-first route for questions that need KID facts before the SQL: both multi-hop items pass on the third version (development result; each earlier run failed on a different bug)
+- [ ] Full router re-run with one agent version, and KID regression runs after the retrieval change
 - [ ] Larger KID library, including Swiss-domiciled products
 - [x] Dockerfile and docker-compose, built and smoke-tested in CI
 - [ ] Deployment notes for AWS or GCP
