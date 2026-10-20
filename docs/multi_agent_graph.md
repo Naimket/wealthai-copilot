@@ -2,7 +2,8 @@
 
 Generated from the compiled graph in `src/wealthai/agent/multi.py` with `graph.get_graph().draw_mermaid()`.
 Dotted edges are conditional. The `kid_agent` node runs the separate KID agent described in
-[agent_graph.md](agent_graph.md).
+[agent_graph.md](agent_graph.md); the `macro_agent` node runs the macro agent described in
+[macro_agent_graph.md](macro_agent_graph.md).
 
 ```mermaid
 ---
@@ -17,6 +18,7 @@ graph TD;
 	route(route)
 	out_of_scope(out_of_scope)
 	kid_agent(kid_agent)
+	macro_agent(macro_agent)
 	sql_gen(sql_gen)
 	sql_run(sql_run)
 	sql_failed(sql_failed)
@@ -35,6 +37,7 @@ graph TD;
 	kid_question -.-> compose;
 	kid_question -.-> kid_agent;
 	route -.-> kid_agent;
+	route -.-> macro_agent;
 	route -.-> out_of_scope;
 	route -.-> refuse;
 	route -.-> sql_gen;
@@ -47,6 +50,7 @@ graph TD;
 	verify_final -.-> abstain;
 	verify_final -.-> compose;
 	abstain --> __end__;
+	macro_agent --> __end__;
 	out_of_scope --> __end__;
 	refuse --> __end__;
 	sql_failed --> __end__;

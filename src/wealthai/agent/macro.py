@@ -76,6 +76,8 @@ Rules:
   from the assessment or the bulletin. A conditional forecast depends on its stated assumption (policy rate held at 0%):
   say so when you report it.
 - Do not extrapolate or predict beyond what the SNB states.
+- If the question asks for a current, live or today's value, give the value the documents state with its date and say
+  that the documents are not a live quote.
 - Answer in the language of the question. Be concise.
 - List in `citations` the numbers of the passages you used.
 

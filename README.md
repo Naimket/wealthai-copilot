@@ -2,20 +2,23 @@
 
 [![ci](https://github.com/Naimket/wealthai-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Naimket/wealthai-copilot/actions/workflows/ci.yml)
 
-A multi-source RAG agent that helps wealth advisors answer factual questions from **fund Key Information Documents (KIDs)**
-and from **client portfolio data**, without inventing facts and without giving investment advice.
+A multi-source RAG agent that helps wealth advisors answer factual questions from **fund Key Information Documents (KIDs)**,
+**Swiss National Bank publications** and **client portfolio data**, without inventing facts and without giving investment
+advice.
 
 Built with LangGraph, hybrid retrieval with a cross-encoder reranker, Ragas evaluation, a read-only SQL tool and a
 FastAPI + Streamlit front-end. It runs locally on a laptop (no GPU) against the Gemini free tier.
 
-> **Status:** working end to end on a 5-fund KID library and 25 synthetic clients. The numbers below come from a
-> development set; a blind test set and macro-report sources are the next steps (see [Roadmap](#roadmap)).
+> **Status:** working end to end on a 5-fund KID library, two SNB publications and 25 synthetic clients. Numbers are
+> reported with the set they come from (development, blind or held-out) and the model used; the remaining work is
+> listed in the [Roadmap](#roadmap).
 
 ## What it does
 
 | Question | Route | What happens |
 |---|---|---|
 | "What are the ongoing costs of the Vanguard FTSE All-World UCITS ETF?" | KIDs | Retrieve, grade, generate, verify against the passages |
+| "What did the SNB decide on 24 September 2026, and what was CPI inflation in August?" | Macro (SNB) | A second agent with its own retrieval over the SNB monetary policy assessment and Quarterly Bulletin; same grade / generate / verify loop |
 | "How many clients do we have per risk profile?" | Portfolios | The LLM writes SQL, a read-only tool runs it, the answer is verified against the rows |
 | "Which funds does Alice Brunner hold and what are their ongoing costs?" | Both | SQL first, then a self-contained KID question for the instruments that have a KID; instruments without one are reported as such |
 | "Should I sell Alice Brunner's Vanguard position?" | Refused | A rule-based guard refuses before any LLM call |
@@ -31,6 +34,8 @@ flowchart LR
     UI --> API[FastAPI /ask]
     API --> R{{"Router agent<br/>(LangGraph)"}}
     R -->|kid| K["KID agent<br/>rewrite, retrieve, grade, generate, verify"]
+    R -->|macro| M["Macro agent<br/>same loop over SNB publications"]
+    M --> VM[("Qdrant macro_chunks<br/>dense + BM25, RRF")]
     R -->|portfolio| S["SQL tool<br/>read-only, whitelisted"]
     R -->|both| S
     S -->|"instruments with a KID"| K
@@ -42,12 +47,13 @@ flowchart LR
 ```
 
 Detailed graphs, generated from the compiled LangGraph objects:
-[KID agent](docs/agent_graph.md) | [multi-source router](docs/multi_agent_graph.md).
+[KID agent](docs/agent_graph.md) | [macro agent](docs/macro_agent_graph.md) | [multi-source router](docs/multi_agent_graph.md).
 
 ### Design decisions
 
-- **Two agents, one wrapped by the other.** The KID agent was evaluated first and left untouched; the router calls it
-  as a node. Adding portfolios did not require re-validating the document pipeline.
+- **Separate agents behind one router.** The KID agent was evaluated first and left untouched; the router calls it
+  as a node, and the macro agent is a sibling with its own vocabulary, grading rules and retrieval. Adding portfolios
+  or macro sources did not require re-validating the KID pipeline.
 - **Control flow is decided by typed fields, not by parsing text.** Every LLM node returns a small Pydantic object
   (`Grade`, `Verification`, `Route`, `SqlQuery`, ...), so routing never depends on free-text wording.
 - **Abstaining is a feature.** The grader detects "this is not in the documents" and the agent says so; a final
@@ -97,17 +103,35 @@ grader asked for every fund to appear on a "which KID is addressed to Switzerlan
 changed, so these 52 questions are no longer blind for those cases; a separate 14-question holdout checks the fix
 ([details](docs/results.md)).
 
-**Multi-source router** (40 questions, Gemini 3.1 Flash Lite; ground truth computed by SQL, no LLM judge):
+**Macro source: SNB publications of September 2026** (whole multi-source agent, deterministic checks; a question is
+correct only if it was routed to `macro` and the answer contains the expected fact):
+
+| Set | Model | Result |
+|---|---|---|
+| Held-out, 18 questions (14 answerable, 4 traps), first run | Gemini 3.1 Flash Lite | 17/18 |
+| Same set after the one routing fix it exposed | `gemini-flash-lite-latest` | 18/18 |
+| Development set, 52 questions, first run (original agent, corrected labels) | `gemini-flash-lite-latest` | 42/50 |
+| Development set after fixes | `gemini-flash-lite-latest` | 51/52 (composite of agent versions; a clean full run is pending) |
+
+Retrieval on the macro text: hybrid (dense + BM25) reached 100% hit@5; the cross-encoder reranker, which was decisive on the
+KIDs, did not help here (97.3%), so the macro agent does not use it. The first run also exposed a mistake of mine: two
+questions I had labelled "not in the documents" were answered by the bulletin, and the system's wrong decline counted as
+a pass until I checked the labels against the text. The one remaining dev miss is a badly worded question. Details in
+[docs/results.md](docs/results.md).
+
+**Multi-source router** (45 questions, `gemini-flash-lite-latest`; ground truth computed by SQL, no LLM judge):
 
 | | Routing | Answer correct |
 |---|---|---|
-| First run | 40/40 | 34/40 |
-| After fixing the causes it exposed | 40/40 | 39/40 |
+| First run with the macro route | 45/45 | 42/45 |
 
-The first run exposed one shared cause behind three failures (the answer step could not see the SQL filter) and one
-confident wrong answer to a ranking question, which now becomes a refusal ("the data does not allow that
-conclusion"). Refusal of investment advice 4/4, prompt-injection items 3/3, database unchanged afterwards.
-These 40 questions were used to fix the problems, so the second number is a development-set result.
+The three misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the cheapest
+fund"; one is a safe refusal, one a silently truncated client list), which a KID-first route would fix, and one
+"current EUR/CHF rate" item whose expectation (decline) predates the macro route; it is relabelled to expect the dated
+bulletin figure. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
+run and 39/40 after fixing causes it exposed: a shared SQL-visibility bug, a rounding rule, and a confident wrong answer to a ranking
+question that now becomes a refusal. Refusal of investment advice 5/5, prompt-injection items 3/3, database unchanged.
+The router questions were used to fix problems, so these are development-set numbers.
 
 **Honest reading of these numbers**
 - The 55 questions guided the design, so 100% is a development-set result, not a generalisation claim.
@@ -140,12 +164,16 @@ copy .env.example .env          # then put your Gemini API key (free from Google
 1. Download the KIDs of the five funds from the issuers' websites into `data/raw/` as
    `ishares_core_msci_em_imi.pdf`, `ishares_core_msci_world.pdf`, `ishares_core_s&p_500.pdf`,
    `vanguard_ftse_all_world.pdf` and `xtrackers_msci_world.pdf`.
-2. Build the indexes and the synthetic portfolios:
+2. Optional, for the `macro` route: download the SNB monetary policy assessment of 24 September 2026 and Quarterly
+   Bulletin 3/2026 (English PDFs, snb.ch) into `data/raw/macro/` as
+   `snb_monetary_policy_assessment_2026_09_24.pdf` and `snb_quarterly_bulletin_2026_3.pdf`.
+3. Build the indexes and the synthetic portfolios:
    ```powershell
    uv run python scripts/ingest.py
+   uv run python scripts/ingest_macro.py        # only if you downloaded the SNB documents
    uv run python scripts/make_portfolios.py
    ```
-3. Ask from the command line, or start the service and the UI (two terminals):
+4. Ask from the command line, or start the service and the UI (two terminals):
    ```powershell
    uv run python scripts/ask_multi.py "Which funds does Alice Brunner hold and what are their ongoing costs?"
 
@@ -153,7 +181,7 @@ copy .env.example .env          # then put your Gemini API key (free from Google
    uv run --group ui streamlit run app/streamlit_app.py
    ```
    Interactive API docs: http://127.0.0.1:8000/docs
-4. Tests (no API key, no models needed): `uv run pytest`
+5. Tests (no API key, no models needed): `uv run pytest`
 
 ### Docker
 
@@ -172,6 +200,10 @@ Reproduce the evaluation (uses the daily free-tier quota; see `docs/results.md`)
 uv run python scripts/eval_retrieval.py                  # retrieval ablation, no LLM
 uv run python scripts/eval_naive.py --mode agent         # end-to-end on the 55 questions
 uv run python scripts/eval_ragas.py data/eval/answers_agent.jsonl data/eval/ragas_agent.csv
+uv run python scripts/eval_naive.py --mode agent --set blind     # blind set (52)
+uv run python scripts/eval_retrieval_macro.py            # macro retrieval ablation, no LLM
+uv run python scripts/eval_macro.py --set macro_holdout  # macro route end to end
+uv run python scripts/eval_router.py                     # router set (45)
 ```
 
 ## Repository layout
@@ -180,8 +212,9 @@ uv run python scripts/eval_ragas.py data/eval/answers_agent.jsonl data/eval/raga
 src/wealthai/
   ingestion/     PDF parsing (section-aware, two-column fix), chunking, indexing
   retrieval.py   dense, BM25, RRF, cross-encoder rerank, fund detection, per-fund balancing
+  retrieval_macro.py   retrieval over the SNB publications
   rag/           single-pass RAG baseline
-  agent/         graph.py (KID agent), multi.py (router), guardrails.py
+  agent/         graph.py (KID agent), macro.py (macro agent), multi.py (router), guardrails.py
   tools/sql.py   read-only SQL tool with layered protections
   portfolio/     synthetic client portfolios
   llm.py         Gemini wrapper: structured output, retries, throttling
@@ -189,8 +222,8 @@ src/wealthai/
 app/             Streamlit front-end (talks to the API only)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
-tests/           95 tests: SQL safety, router control flow, evaluation checks, API, UI (no LLM calls)
-data/golden/     the 55-question development set
+tests/           130 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
+data/golden/     development (55), blind (52), holdout (14), router (45), macro (52) and macro holdout (18) sets
 docs/            results log and agent graphs
 ```
 
@@ -200,7 +233,8 @@ docs/            results log and agent graphs
 - [ ] Single-pass baselines on the blind set and repeated runs to report variance
 - [x] Ragas scores for the agent (development set)
 - [ ] Agent vs single-pass with the same terminology glossary, on the blind set
-- [ ] Macro-report source (central bank publications) and a `macro` route
+- [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
+- [ ] Clean full run of the macro development set with one agent version; repeated runs for variance
 - [ ] A test that feeds the verification step deliberately wrong answers
 - [ ] KID-first route for questions that need KID facts before the SQL (for example "clients holding the cheapest fund")
 - [ ] Larger KID library, including Swiss-domiciled products
@@ -212,6 +246,10 @@ docs/            results log and agent graphs
 Five funds and 25 synthetic clients keep the project reproducible, not representative. The free tier limits throughput,
 so evaluations are rationed and the agent is slow by design (several sequential LLM calls). Results depend on the
 chosen Gemini model; numbers are only comparable when produced with the same model.
+
+A question that combines client data and macro facts (for example a client's holdings and last month's inflation) is not
+supported: the router picks one source. The macro corpus is two documents from one quarter, so it demonstrates the
+architecture rather than macro coverage.
 
 ## Author
 

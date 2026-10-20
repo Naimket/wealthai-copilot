@@ -212,3 +212,106 @@ the next clean check is a fresh run of the 55 development questions (regression)
 
 Operational note: h14 took 277 s against ~17 s for the others, consistent with rate-limit back-off near the daily
 quota. Latency figures from days with a nearly exhausted quota should not be quoted.
+
+## Phase 8 - macro source: SNB publications of September 2026
+
+Corpus: two public Swiss National Bank documents, the monetary policy assessment of 24 September 2026 (3 pages) and
+Quarterly Bulletin 3/2026 (48 pages, English): 112 chunks. Parsing is section-aware (heading fonts plus PDF bookmarks),
+two-column aware, and drops chart data series (`is_prose`). The macro agent has its own retrieval (`macro_chunks`
+collection) and the router has a fourth route, `macro`.
+
+### Retrieval ablation (macro set, 37 single-fact answerable questions, k=5, no LLM)
+
+| Mode | hit@5 | MRR |
+|---|---|---|
+| dense | 97.3% | 0.850 |
+| bm25 | 97.3% | 0.923 |
+| hybrid (RRF) | 100% | 0.931 |
+| hybrid + cross-encoder rerank | 97.3% | 0.905 |
+
+Here the reranker does not help, unlike on the KIDs. Two plausible reasons that I did not isolate: the cross-encoder is
+English-only (it also misses the French question) and the macro passages are long and numeric. The agent uses `hybrid`.
+This choice was made after seeing this set, so it is a development choice. (Two questions were relabelled later, see
+below, so the set now has 39 such questions; the table was measured before and has not been re-run.)
+
+### End to end (`scripts/eval_macro.py`, whole multi-source agent, deterministic checks, no LLM judge)
+
+An answerable question counts as correct only if it was routed to `macro`, the agent answered, and the answer contains the
+expected fact. An unanswerable question is correct if the system declined or abstained.
+
+**Held-out set** (`data/golden/macro_holdout_set.jsonl`: 14 answerable + 4 traps, written after the first dev run and
+before the tuned agent ran on it; US/euro area/China figures, mortgage and money aggregates, a Fed decision, two
+comparisons):
+
+| Run | Model | Result |
+|---|---|---|
+| First run, agent as of the dev-set fixes (exploratory model) | Gemini 3.1 Flash Lite | 17/18 |
+| After extending the router description | `gemini-flash-lite-latest` (3.5) | 18/18 |
+
+The single miss of the first run (mh10, healthcare sector index) was a routing error: the router description did not
+mention the Swiss stock market, so it answered "out of scope". I extended the description (stock market, money
+aggregates, inflation surveys) and the second run passed, so mh10 is **not** held out any more; 17/18 on an unseen
+model is the cleaner figure. Latency 21 s per question.
+
+**Development set** (`data/golden/macro_set.jsonl`, 52 questions after the corrections below):
+
+| Run | Model | Result |
+|---|---|---|
+| First run, original agent | `gemini-flash-lite-latest` | 44/50 with the original labels, **42/50** with the corrected ones |
+| Agent after the first round of fixes, full run | Gemini 3.1 Flash Lite (exploratory) | 48/52 |
+| Failed or changed items re-run with the final agent | `gemini-flash-lite-latest` | 51/52 (composite, see below) |
+
+The 51/52 is a composite: the 35 answers that were not re-run come from earlier agent versions, so it is not a clean
+single-version number. A full single-version run on the 3.5 model is still to do.
+
+### What the first run found
+
+- **A label error of mine.** m41 (ECB deposit facility rate) and m42 (federal funds range) were written as
+  "unanswerable" traps, but the bulletin states both (2.5% and 3.75-4.0%). The router sent them to `out_of_scope`, so the
+  decline counted as a pass. They are answerable now, and two new traps replace them (Bank of England, Bank of
+  Japan). The lesson: every "not in the documents" label needs a check against the text, not only the answerable ones.
+- **Router vocabulary.** Questions about the US, the euro area, tariffs, the mortgage reference rate, stock indices and
+  inflation surveys were routed out of scope because the route description did not say the bulletin covers them.
+- **Grader too strict, then too lax.** On m04 and m08 the grader rejected passages that held the answer ("from 0.6% in
+  May to 0.8% in August"); after loosening it, m36 ("date of the previous assessment") got a vague "in June" accepted. The
+  grader now asks for the exact date or number when one is requested, and the rewriter maps "previous assessment" to the
+  chronicle wording. These fixes were designed on the dev set.
+- **m08 stays a miss.** The question asks "which price index" turned positive; the text says goods inflation. A bad
+  question, not tuned for.
+
+### Caveats
+
+- Everything above is one run per configuration; the 3.5 and 3.1 models disagree on individual items, so differences of one
+  question are noise.
+- The dev set was used to fix the agent; the holdout is small (18) and was partly consumed by the mh10 fix.
+- Trap questions test abstention on near misses; they cannot prove the agent never invents a figure.
+
+## Phase 6 (continued) - router re-run with the macro route (45 questions, `gemini-flash-lite-latest`)
+
+Set grown from 40 to 45 questions (4 macro items, 1 advice item about macro; r44 asks for the Bank of England rate).
+First run after adding the route:
+
+| Category | n | Route correct | Answer correct |
+|---|---|---|---|
+| KID only | 6 | 6/6 | 6/6 |
+| Client data only | 14 | 14/14 | 14/14 |
+| Client data + KIDs | 5 | 5/5 | 5/5 |
+| Multi-hop | 2 | 2/2 | 0/2 |
+| Advice (must refuse) | 5 | 5/5 | 5/5 |
+| Out of scope | 4 | 4/4 | 3/4 |
+| Safety | 3 | 3/3 | 3/3 |
+| Unknown client | 2 | 2/2 | 2/2 |
+| Macro | 4 | 4/4 | 4/4 |
+| **Total** | **45** | **45/45** | **42/45** |
+
+Database unchanged (25 clients, 138 holdings).
+
+- **r26, r27 (multi-hop, known limitation).** "Which clients hold the fund with the lowest ongoing costs" needs KID facts
+  before the SQL. r26 says the data does not allow that conclusion (safe); r27 lists the clients of the funds above
+  0.15% but is missing one client, probably because its query ends with `LIMIT 50` over 138 holdings. A KID-first route
+  is the planned fix.
+- **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
+  now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
+  I relabelled it (expects the dated figure) after seeing this result, so 42/45 is the as-run score. The macro prompt
+  also now says that a "current" question gets the dated figure and a note that the documents are not a live quote;
+  that wording change has not been run yet.
