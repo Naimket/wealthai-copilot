@@ -336,6 +336,9 @@ Database unchanged (25 clients, 138 holdings).
   before the SQL. r26 says the data does not allow that conclusion (safe); r27 lists the clients of the funds above
   0.15% but is missing one client, probably because its query ends with `LIMIT 50` over 138 holdings. A KID-first route
   is the planned fix.
+  **Update (2026-10-20):** the KID-first route (`kid_first`) is now implemented: a generated question asks the KID agent for the
+  fact of all five funds, and the SQL step receives that answer and filters clients by the qualifying instruments. It is covered by
+  four control-flow tests with scripted LLM calls; it has **not** been run against r26/r27 yet, so there is no result to report.
 - **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
   now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
   I relabelled it after seeing this result, so 42/45 is the as-run score. The macro prompt also now says that a "current"

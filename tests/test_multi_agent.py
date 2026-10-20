@@ -276,3 +276,48 @@ def test_sql_prompt_states_the_rounding_limit_and_missing_columns_rules(setup):
     assert "never round counts or ages" in sql_prompt
     assert "only when the question asks for a top-N" in sql_prompt
     assert "NO cost, fee or risk columns" in sql_prompt
+
+
+# --- KID-first route ----------------------------------------------------------------------------------
+
+def KQ(question="What are the ongoing costs of each of the five funds?"):
+    return multi.KidQuestion(needed=True, question=question)
+
+
+def test_kid_first_asks_the_kids_then_filters_the_database_by_their_facts(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("10 clients hold it.")], Verification=[V(True)])
+    out = multi.run_multi("Which clients hold the fund with the lowest ongoing costs?")
+    assert out["route"] == "kid_first" and out["answer"] == "10 clients hold it."
+    assert llm.calls == ["Route", "KidQuestion", "SqlQuery", "FinalAnswer", "Verification"]
+    assert kid_calls == ["What are the ongoing costs of each of the five funds?"]  # the KID agent sees the generated question
+    sql_prompt = [p for s, p in llm.prompts if s == "SqlQuery"][0]
+    assert "KID FACTS" in sql_prompt and KID_RESULT["answer"] in sql_prompt  # the SQL step sees the KID answer
+    compose_prompt = [p for s, p in llm.prompts if s == "FinalAnswer"][0]
+    assert KID_RESULT["answer"] in compose_prompt
+    assert out["sources"][-1] == "portfolios.db" and "test.pdf" in out["sources"]
+
+
+def test_kid_first_falls_back_to_the_advisor_question_when_none_is_generated(setup):
+    install, kid_calls = setup
+    install(Route=[R("kid_first")], KidQuestion=[multi.KidQuestion(needed=True, question="  ")],
+            SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA()], Verification=[V(True)])
+    multi.run_multi("Which clients hold a fund with ongoing costs above 0.15%?")
+    assert kid_calls == ["Which clients hold a fund with ongoing costs above 0.15%?"]
+
+
+def test_kid_first_abstains_without_querying_when_the_kids_cannot_answer(setup, monkeypatch):
+    install, _ = setup
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)])
+    monkeypatch.setattr(multi, "run_kid_agent", lambda q: dict(KID_RESULT, answerable=False, answer=ABSTAIN_MSG))
+    out = multi.run_multi("Which clients hold the fund with the lowest tracking error?")
+    assert out["answer"] == ABSTAIN_MSG and not out["answerable"]
+    assert "SqlQuery" not in llm.calls
+
+
+def test_kid_first_still_refuses_advice_before_any_call(setup):
+    install, kid_calls = setup
+    llm = install(Route=[R("kid_first")])
+    out = multi.run_multi("Which fund should Alice buy, the one with the lowest ongoing costs?")
+    assert out["answer"] == REFUSE_MSG and llm.calls == [] and kid_calls == []

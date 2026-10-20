@@ -24,6 +24,7 @@ ROUTE_LABELS = {
     "macro": "SNB publications (macro)",
     "portfolio": "Client portfolios (SQL)",
     "both": "Portfolios + KIDs",
+    "kid_first": "KIDs first, then portfolios",
     "advice": "Refused: investment advice",
     "out_of_scope": "Out of scope",
 }

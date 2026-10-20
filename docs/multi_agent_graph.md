@@ -19,6 +19,7 @@ graph TD;
 	out_of_scope(out_of_scope)
 	kid_agent(kid_agent)
 	macro_agent(macro_agent)
+	kid_first_question(kid_first_question)
 	sql_gen(sql_gen)
 	sql_run(sql_run)
 	sql_failed(sql_failed)
@@ -33,10 +34,14 @@ graph TD;
 	guard -.-> refuse;
 	guard -.-> route;
 	kid_agent -.-> __end__;
+	kid_agent -.-> abstain;
 	kid_agent -.-> compose;
+	kid_agent -.-> sql_gen;
+	kid_first_question --> kid_agent;
 	kid_question -.-> compose;
 	kid_question -.-> kid_agent;
 	route -.-> kid_agent;
+	route -.-> kid_first_question;
 	route -.-> macro_agent;
 	route -.-> out_of_scope;
 	route -.-> refuse;

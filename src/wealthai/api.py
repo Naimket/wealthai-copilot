@@ -33,7 +33,7 @@ class AskResponse(BaseModel):
     question: str
     answer: str
     answerable: bool
-    route: str = Field(description="kid, macro, portfolio, both, advice or out_of_scope")
+    route: str = Field(description="kid, macro, portfolio, both, kid_first, advice or out_of_scope")
     sql: str = Field(description="SQL executed against the portfolio database, if any")
     citations: list[int]
     sources: list[str]

@@ -6,6 +6,8 @@
           |   --out_of_scope-> out_of_scope
           |   --kid----------> kid_agent ---------------------------> END   (the evaluated KID agent, unchanged)
           |   --macro--------> macro_agent --------------------------> END   (SNB publications, own retrieval)
+          |   --kid_first----> kid_first_question --> kid_agent --> sql_gen (KID facts choose the instruments,
+          |                                                                   then the database finds the clients)
           |
         sql_gen <--(error, once)-- sql_run <--+
           |                          |
@@ -38,7 +40,7 @@ OUT_OF_SCOPE_MSG = ("I can answer questions about the fund KIDs, the SNB publica
                     "client portfolios in this system. "
                     "This question is outside that scope.")
 SQL_FAILED_MSG = "I could not retrieve the portfolio data needed to answer this question."
-ROUTES = {"kid", "macro", "portfolio", "both", "advice", "out_of_scope"}
+ROUTES = {"kid", "macro", "portfolio", "both", "kid_first", "advice", "out_of_scope"}
 
 ROUTE_PROMPT = """You route questions from a wealth advisor to the right knowledge source.
 
@@ -59,7 +61,10 @@ Choose exactly one route:
 - kid: needs only facts from the KIDs; no client is involved.
 - macro: needs only facts from the SNB publications (monetary policy, Swiss or foreign economy, inflation, rates, franc, tariffs); no fund or client is involved.
 - portfolio: needs only client data (who holds what, values, allocations, rankings or counts of clients).
-- both: needs client data AND KID facts (for example the costs or risk of the funds a client holds).
+- both: needs client data AND KID facts about funds the question already points to through a client (for example the
+  costs or risk of the funds a client holds).
+- kid_first: KID facts decide WHICH funds qualify (the cheapest, the lowest risk, costs above a threshold) and the
+  question then asks which clients hold them.
 - advice: asks what to buy, sell or choose, or whether something is suitable or recommended for a client.
 - out_of_scope: anything else (market news, live prices, general chat). A question about a macro figure that the
   SNB publications could contain is macro, even if the answer may turn out not to be there.
@@ -77,8 +82,15 @@ Rules:
 - The database has NO cost, fee or risk columns: those facts exist only in the KIDs. Never invent a column. If the question needs KID facts to choose instruments, return the clients and the instruments they hold (name, isin, kid_source).
 - If the question also needs KID facts about the instruments, include instruments.name, instruments.isin and instruments.kid_source in the result.
 - Do not answer the question; only write the query.
-{feedback}
+{kid_facts}{feedback}
 Question: {question}"""
+
+KID_FIRST_PROMPT = """The advisor asked the question below. Which funds qualify depends on facts printed in the fund documents (KIDs).
+Write ONE self-contained question for the KID assistant that asks for that fact for EACH of the five funds
+(iShares Core MSCI EM IMI, iShares Core MSCI World, iShares Core S&P 500, Vanguard FTSE All-World, Xtrackers MSCI World),
+for example "What are the ongoing costs of each of the five funds?". Ask only for the fact the selection depends on.
+
+Advisor question: {question}"""
 
 KID_QUESTION_PROMPT = """The advisor asked the question below. The database result shows the client's data.
 Write ONE self-contained question for the fund-document (KID) assistant about the instruments in the result.
@@ -247,7 +259,13 @@ def macro_agent(state: State) -> dict:
 
 def sql_gen(state: State) -> dict:
     feedback = f"Your previous query failed: {state['sql_error']}. Fix it." if state.get("sql_error") else ""
-    prompt = SQL_PROMPT.format(schema=SCHEMA_DESCRIPTION, question=state["question"], feedback=feedback)
+    kid_facts = ""
+    if state.get("route") == "kid_first" and state.get("kid"):
+        kid_facts = ("KID FACTS (from the fund documents, one value per fund):\n" + _kid_text(state) + "\n"
+                     "Use them to decide which funds qualify for the question, then select the clients holding exactly those\n"
+                     "instruments, filtering by instruments.name (LIKE on the distinctive words of the fund name) or instruments.isin.\n"
+                     "The facts above are the only source of costs or risk; do not invent a column for them.\n")
+    prompt = SQL_PROMPT.format(schema=SCHEMA_DESCRIPTION, question=state["question"], kid_facts=kid_facts, feedback=feedback)
     out = generate(prompt, schema=SqlQuery)
     return {"sql": out.sql.strip(), "sql_attempts": state.get("sql_attempts", 0) + 1, "trace": [f"sql_gen -> {out.sql.strip()!r}"]}
 
@@ -262,6 +280,12 @@ def sql_run(state: State) -> dict:
 
 def sql_failed(state: State) -> dict:
     return {"answer": SQL_FAILED_MSG, "answerable": False, "trace": ["sql_failed"]}
+
+
+def kid_first_question(state: State) -> dict:
+    out = generate(KID_FIRST_PROMPT.format(question=state["question"]), schema=KidQuestion)
+    question = out.question.strip() or state["question"]  # fall back to the advisor question itself
+    return {"kid_question": question, "trace": [f"kid_first_question -> {question!r}"]}
 
 
 def kid_question(state: State) -> dict:
@@ -301,7 +325,7 @@ def after_guard(state: State) -> str:
 
 
 def after_route(state: State) -> str:
-    return {"kid": "kid_agent", "macro": "macro_agent", "portfolio": "sql_gen", "both": "sql_gen",
+    return {"kid": "kid_agent", "macro": "macro_agent", "portfolio": "sql_gen", "both": "sql_gen", "kid_first": "kid_first_question",
             "advice": "refuse", "out_of_scope": "out_of_scope"}[state["route"]]
 
 
@@ -316,7 +340,11 @@ def after_kid_question(state: State) -> str:
 
 
 def after_kid_agent(state: State) -> str:
-    return END if state["route"] == "kid" else "compose"
+    if state["route"] == "kid":
+        return END
+    if state["route"] == "kid_first":  # no KID facts, no way to choose the instruments: do not guess
+        return "sql_gen" if state["kid"]["answerable"] else "abstain"
+    return "compose"
 
 
 def after_compose(state: State) -> str:
@@ -332,20 +360,22 @@ def after_verify(state: State) -> str:
 def build_graph():
     g = StateGraph(State)
     for name, fn in [("guard", guard), ("refuse", refuse), ("route", route), ("out_of_scope", out_of_scope),
-                     ("kid_agent", kid_agent), ("macro_agent", macro_agent), ("sql_gen", sql_gen), ("sql_run", sql_run), ("sql_failed", sql_failed),
+                     ("kid_agent", kid_agent), ("macro_agent", macro_agent), ("kid_first_question", kid_first_question),
+                     ("sql_gen", sql_gen), ("sql_run", sql_run), ("sql_failed", sql_failed),
                      ("kid_question", kid_question), ("compose", compose), ("verify_final", verify_final),
                      ("abstain", abstain)]:
         g.add_node(name, fn)
     g.add_edge(START, "guard")
     g.add_conditional_edges("guard", after_guard, {"refuse": "refuse", "route": "route"})
     g.add_conditional_edges("route", after_route, {"kid_agent": "kid_agent", "macro_agent": "macro_agent",
-                                                   "sql_gen": "sql_gen", "refuse": "refuse",
+                                                   "sql_gen": "sql_gen", "kid_first_question": "kid_first_question", "refuse": "refuse",
                                                    "out_of_scope": "out_of_scope"})
     g.add_edge("sql_gen", "sql_run")
     g.add_conditional_edges("sql_run", after_sql_run, {"sql_gen": "sql_gen", "sql_failed": "sql_failed",
                                                        "kid_question": "kid_question", "compose": "compose"})
     g.add_conditional_edges("kid_question", after_kid_question, {"kid_agent": "kid_agent", "compose": "compose"})
-    g.add_conditional_edges("kid_agent", after_kid_agent, {END: END, "compose": "compose"})
+    g.add_edge("kid_first_question", "kid_agent")
+    g.add_conditional_edges("kid_agent", after_kid_agent, {END: END, "compose": "compose", "sql_gen": "sql_gen", "abstain": "abstain"})
     g.add_conditional_edges("compose", after_compose, {"verify_final": "verify_final", END: END})
     g.add_conditional_edges("verify_final", after_verify, {"compose": "compose", "abstain": "abstain", END: END})
     for terminal in ("refuse", "out_of_scope", "macro_agent", "sql_failed", "abstain"):
