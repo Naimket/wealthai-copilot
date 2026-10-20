@@ -2,6 +2,8 @@
 
 [![ci](https://github.com/Naimket/wealthai-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Naimket/wealthai-copilot/actions/workflows/ci.yml)
 
+![WealthAI-Copilot: agent flow and first-run results](docs/img/architecture.png)
+
 A multi-source RAG agent that helps wealth advisors answer factual questions from **fund Key Information Documents (KIDs)**,
 **Swiss National Bank publications** and **client portfolio data**, without inventing facts and without giving investment
 advice.
