@@ -251,7 +251,8 @@ docs/            results log, agent graphs, cloud deployment notes (design only)
 - [ ] Agent vs single-pass with the same terminology glossary, on the blind set
 - [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
 - [ ] Clean full run of the macro development set with one agent version; repeated runs for variance
-- [ ] Run the verification stress test (`scripts/eval_verifier.py`: 9 deliberately wrong and 7 faithful answers; written, not yet run)
+- [x] Verification stress test (`scripts/eval_verifier.py`): 9/9 deliberately wrong answers flagged, 0/7 false alarms (small and easy set, see results)
+- [ ] A harder verifier test: near-miss errors (rounding, wrong fund in a list, wrong period) and more than one case per kind
 - [x] KID-first route for questions that need KID facts before the SQL: both multi-hop items pass on the third version (development result; each earlier run failed on a different bug)
 - [ ] Full router re-run with one agent version, and KID regression runs after the retrieval change
 - [ ] Larger KID library, including Swiss-domiciled products

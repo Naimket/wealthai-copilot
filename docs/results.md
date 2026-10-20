@@ -393,3 +393,32 @@ Database unchanged (25 clients, 138 holdings).
   the check I had written (expect "September") matched the decline message by accident ("... SNB publications of
   September 2026 ..."): a false pass. The item now accepts either safe behaviour, the dated figure ("0.94") or the decline,
   and nothing else; on that rule the decline passes, so 43/45 stands, but for the right reason this time.
+
+## Phase 9 - stress test of the verification step (`scripts/eval_verifier.py`, `gemini-flash-lite-latest`, one run)
+
+In the normal pipeline the `verify` node almost never fires, because the generator is usually faithful, so its detection
+ability had never been observed. The test feeds the real node with 16 labelled cases built from KID figures
+(`data/golden/verifier_set.jsonl`): 7 faithful answers (including a correct "the passage does not say" and a correct
+subtraction) and 9 answers corrupted on purpose, one per kind. The passages are short excerpts written from the real
+KIDs, with the same figures. I wrote the cases after reading the verifier prompt and did not iterate on them.
+
+| Corruption | Flagged |
+|---|---|
+| Number changed (0.20% -> 0.12%) | 1/1 |
+| Fund swapped (Xtrackers given the S&P 500 cost) | 1/1 |
+| Invented performance fee | 1/1 |
+| Wrong ranking (not the cheapest fund) | 1/1 |
+| Reversed fact (entry fee where there is none) | 1/1 |
+| Wrong holding period (10 instead of 5 years) | 1/1 |
+| Wrong risk class (6 instead of 4) | 1/1 |
+| Unsupported addition (domicile, tracking difference) | 1/1 |
+| Wrong arithmetic (0.23 instead of 0.13 points) | 1/1 |
+| **Corrupted answers detected** | **9/9** |
+| **False alarms on faithful answers** | **0/7** |
+
+Reading: the verifier catches blatant errors in short contexts and does not reject correct answers, including a correct
+decline and a correct computed difference. This is a smoke test, not a benchmark: one case per kind, errors that are easy
+to see, and a short passage per case (the real node sees up to 8 chunks). Not tested: near-miss errors (a rounding that
+changes the second decimal, one wrong fund in a list of five), long contexts, and errors of omission. Earlier findings
+still stand: the verifier did not catch an incomplete list in the kid_first route (r27), which is why a completeness
+rule was added to the multi-source verifier. Run on 2026-10-20 with 16 calls.
