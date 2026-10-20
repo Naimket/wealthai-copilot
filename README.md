@@ -155,7 +155,7 @@ showed 8/10 and then 10/10, a composite of three agent versions on questions use
 Second set: 10 further questions, written after those fixes and run once on the final code with Gemini 3.1 Flash Lite (the
 3.5 quota was exhausted, so not directly comparable): **9/10**. All nine KID-then-SQL, aggregate and reverse-hop questions were
 correct; the miss was a control question with two named funds where the SQL compared an instrument name with `=` and answered
-"no matching client data" (fixed afterwards with a prompt rule and a retry guard, not yet re-run).
+"no matching client data" (fixed afterwards with a prompt rule and a retry guard; the re-run of that one item passes, a development result).
 
 **Single-pass baseline on the same blind set** (same retrieval, one LLM call, ~4 s per question): 50/52, against 49/52 for the
 agent's first run. That is a tie. The agent's three blind misses were caused by its own steps (query rewriting, a strict

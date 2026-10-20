@@ -526,7 +526,10 @@ confident wrong answer to a question with no KID step at all. The SQL prompt ask
 
 Fixes made after seeing it (so p10 is now a development item): the SQL prompt requires `LIKE` on instrument names as well,
 and an empty result from a query that compares an instrument name with `=` is rejected and retried once with an explanatory
-error (then a safe message). Three tests (177 in total). Not re-run on the model yet.
+error (then a safe message). Three tests (177 in total).
+
+**Re-run of p10 after the fix (same model, development result): passes**, so the set shows 10/10 as a composite of two code
+versions. The 9/10 above remains the figure from the first run on unseen questions.
 
 Operational: 503 overload errors made this run slow on 3.1 Flash Lite (mean 162 s per question; p08 took 553 s with several
 back-offs). They do not count against the quota but make that model impractical for long runs.
