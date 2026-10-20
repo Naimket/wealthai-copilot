@@ -354,3 +354,21 @@ def test_kid_first_still_refuses_advice_before_any_call(setup):
 def test_listing_questions_get_a_completeness_rule_in_compose_and_verify():
     assert "never shorten the list" in multi.COMPOSE_PROMPT
     assert "leaves out any" in multi.VERIFY_PROMPT
+
+
+def test_qualifying_funds_reach_compose_and_verify_on_the_kid_first_route_only(setup):
+    install, _ = setup
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], InstrumentSelection=[SEL("Test World ETF")],
+                  SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA()], Verification=[V(True)])
+    multi.run_multi("Which clients hold the fund with the lowest ongoing costs?")
+    for schema in ("FinalAnswer", "Verification"):
+        prompt = [p for s, p in llm.prompts if s == schema][0]
+        assert "chosen from the KID ANSWER by comparing" in prompt and "holding them): Test World ETF" in prompt
+
+
+def test_other_routes_have_no_qualifying_block(setup):
+    install, _ = setup
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA()],
+                  Verification=[V(True)])
+    multi.run_multi("How many clients do we have?")
+    assert all("chosen from the KID ANSWER by comparing" not in p for s, p in llm.prompts if s in ("FinalAnswer", "Verification"))

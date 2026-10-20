@@ -61,3 +61,17 @@ def test_all_funds_is_ignored_by_modes_without_per_fund_balancing(monkeypatch):
     monkeypatch.setattr(retrieval, "rerank", lambda q, c, k: [])
     retrieval.retrieve("total costs", k=5, mode="hybrid_rerank", all_funds=True)
     assert calls == [None]
+
+
+def test_a_widened_retry_gets_more_chunks_per_fund(monkeypatch):
+    def fake_search(query, n, sources=None):
+        src = sources[0] if sources and len(sources) == 1 else "a.pdf"
+        return [{"chunk_id": f"{src}-{i}", "source": src, "text": f"{src} {i}", "score": 1.0} for i in range(6)]
+
+    monkeypatch.setattr(retrieval, "dense_search", fake_search)
+    monkeypatch.setattr(retrieval, "bm25_search", fake_search)
+    monkeypatch.setattr(retrieval, "rerank", lambda q, cands, k: [dict(c, score=1.0) for c in cands[:k]])
+    first = retrieval.retrieve("total costs", k=5, mode="hybrid_perfund_rerank", all_funds=True)
+    retry = retrieval.retrieve("total costs", k=8, mode="hybrid_perfund_rerank", all_funds=True)  # the agent widens k on a retry
+    assert len(retry) > len(first)  # before the fix both returned 2 chunks per fund
+    assert all(sum(c["source"] == s for c in retry) == 3 for s in KEYS)

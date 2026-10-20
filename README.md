@@ -125,13 +125,16 @@ a pass until I checked the labels against the text. The one remaining dev miss i
 | | Routing | Answer correct |
 |---|---|---|
 | First run with the macro route | 45/45 | 42/45 (43/45 after the r35 item was corrected, see below) |
-| Re-run of the two multi-hop items after adding the KID-first route | 45/45 | 44/45 |
+| Re-run of the two multi-hop items after adding the KID-first route (first version) | 45/45 | 44/45 |
+| Same two items after adding validated instrument selection (second version) | 45/45 | 43/45 |
 
 The three first-run misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the
 cheapest fund"; one was a safe refusal, the other a list with wrong and missing clients), and one "current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
 bulletin figure or a decline (the router flips between the two across runs, and my first corrected check matched the
 decline message by accident, so I tightened it). The new KID-first route fixed one multi-hop item on its first run (r26) and
-exposed a SQL-filter and list-completeness error on the other (r27); a fix is implemented and awaits a re-run. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
+exposed a SQL-filter and list-completeness error on the other (r27). The next version made both fail for other reasons (a
+composer rule that refused a ranking the KID answer already settled; a retry that could not widen a five-fund search), both
+fixed and awaiting another run. Multi-hop is the weakest category, and the fixes were designed on the same two items. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
 run and 39/40 after fixing causes it exposed: a shared SQL-visibility bug, a rounding rule, and a confident wrong answer to a ranking
 question that now becomes a refusal. Refusal of investment advice 5/5, prompt-injection items 3/3, database unchanged.
 The router questions were used to fix problems, so these are development-set numbers.
@@ -231,7 +234,7 @@ src/wealthai/
 app/             Streamlit front-end (talks to the API only)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
-tests/           137 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
+tests/           140 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
 data/golden/     development (55), blind (52), holdout (14), router (45), macro (52) and macro holdout (18) sets
 docs/            results log and agent graphs
 ```
@@ -246,7 +249,7 @@ docs/            results log and agent graphs
 - [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
 - [ ] Clean full run of the macro development set with one agent version; repeated runs for variance
 - [ ] A test that feeds the verification step deliberately wrong answers
-- [x] KID-first route for questions that need KID facts before the SQL (r26 passes, r27 failed on the first run; a fix is implemented and pending a re-run)
+- [ ] KID-first route for questions that need KID facts before the SQL: implemented; r26 and r27 each failed on a different bug, fixes pending a re-run
 - [ ] Larger KID library, including Swiss-domiciled products
 - [x] Dockerfile and docker-compose, built and smoke-tested in CI
 - [ ] Deployment notes for AWS or GCP

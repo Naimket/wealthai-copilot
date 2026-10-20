@@ -123,10 +123,12 @@ DATABASE RESULT (fictional client data, amounts in CHF):
 SQL THAT PRODUCED IT (its WHERE, GROUP BY and LIMIT define what each number or row refers to):
 {sql}
 
-KID ANSWER (from the fund documents):
+{qualifying}KID ANSWER (from the fund documents):
 {kid}
 
 Rules:
+- When FUNDS THAT QUALIFY is given, the condition in the question (the lowest cost, costs above a threshold, ...) is
+  established by the KID ANSWER; do not refuse it for lack of cost data in the database. Report the clients in the database result.
 - Never use outside knowledge and never guess a number. Do the arithmetic only from the figures shown.
 - If the database result has no rows, say no matching client data was found.
 - For an instrument whose kid_source is empty, say that no KID is available in the knowledge base for it.
@@ -145,6 +147,8 @@ appears in, or follows directly from, the evidence (re-do any sum, share or rank
 each number or row refers to. Also set supported=false if the answer addresses a different subset or question than
 the one asked (for example one LIMIT 1 row presented as the answer to a ranking question), and if the question asks
 which clients or funds and the answer leaves out any in the DATABASE RESULT or names one that is not there.
+When FUNDS THAT QUALIFY is given, the choice of funds counts as supported if the figures in the KID ANSWER justify it
+(re-do the comparison yourself); the clients must be those in the DATABASE RESULT.
 List any unsupported claim in `unsupported`.
 
 Question: {question}
@@ -155,7 +159,7 @@ DATABASE RESULT (fictional client data; all amounts are in CHF):
 SQL THAT PRODUCED IT:
 {sql}
 
-KID ANSWER:
+{qualifying}KID ANSWER:
 {kid}
 
 KID PASSAGES:
@@ -224,6 +228,15 @@ def _kid_text(state: State) -> str:
     if not kid:
         return "(not requested)"
     return kid["answer"] if kid["answerable"] else f"The KID assistant could not answer: {kid['answer']}"
+
+
+def _qualifying_text(state: State) -> str:
+    """The funds chosen from the KID facts (kid_first route only); empty on every other route."""
+    chosen = state.get("qualifying")
+    if not chosen:
+        return ""
+    return ("FUNDS THAT QUALIFY (chosen from the KID ANSWER by comparing its figures; the database result lists the clients\n"
+            "holding them): " + "; ".join(c["name"] for c in chosen) + "\n\n")
 
 
 def _passages(state: State) -> str:
@@ -337,6 +350,7 @@ def compose(state: State) -> dict:
     if state.get("unsupported"):
         feedback = f"Your previous draft had unsupported claims: {state['unsupported']}. Remove them; use only the evidence."
     prompt = COMPOSE_PROMPT.format(table=state["table"], sql=state.get("sql", ""), kid=_kid_text(state),
+                                   qualifying=_qualifying_text(state),
                                    question=state["question"], feedback=feedback)
     out = generate(prompt, schema=FinalAnswer)
     drafts = state.get("drafts", 0) + 1
@@ -346,7 +360,8 @@ def compose(state: State) -> dict:
 
 def verify_final(state: State) -> dict:
     prompt = VERIFY_PROMPT.format(question=state["question"], table=state["table"], sql=state.get("sql", ""),
-                                  kid=_kid_text(state), passages=_passages(state), answer=state["answer"])
+                                  kid=_kid_text(state), qualifying=_qualifying_text(state), passages=_passages(state),
+                                  answer=state["answer"])
     out = generate(prompt, schema=Verification)
     return {"supported": out.supported, "unsupported": out.unsupported,
             "trace": [f"verify_final supported={out.supported} {out.unsupported!r}"]}

@@ -153,7 +153,9 @@ def retrieve(query: str, k: int = 5, mode: str = "hybrid_filter_rerank", all_fun
     if mode == "hybrid":
         return hybrid[:k]
     if mode == "hybrid_perfund_rerank" and sources and len(sources) > 1:
-        per_fund = max(2, -(-k // len(sources)))  # ceil(k / n_funds), at least 2 chunks per fund
+        # ceil(k / n_funds), at least 2 chunks per fund, and one more per fund once k is widened by a retry (k > 5);
+        # without that, the retry of a five-fund question (k=8) would return exactly the same 2 chunks per fund.
+        per_fund = max(2, -(-k // len(sources)), 2 + max(0, k - 5) // 3)
         merged = []
         for src in sources:
             candidates = rrf([dense_search(query, CANDIDATES, [src]), bm25_search(query, CANDIDATES, [src])])

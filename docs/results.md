@@ -349,7 +349,18 @@ Database unchanged (25 clients, 138 holdings).
   picks the qualifying funds from the KID answer, validated in code against the instruments table (invented names are dropped; an
   empty selection abstains), and the SQL step must filter with `instruments.isin IN (...)`; (2) the compose prompt must name
   every client in the result and the verifier rejects answers that omit or add entities. These changes are covered by
-  seven control-flow tests with scripted model calls and have **not** been run against the model yet.
+  seven control-flow tests with scripted model calls.
+  **Second run (same day, after those changes): r26 and r27 both failed, for two different reasons, neither in the new
+  step.** In r26 the selection and the SQL were correct (S&P 500 at 0.07%, `isin IN ('IE00B5BMR087')`, 8 clients), but the
+  compose step answered "the available data does not allow that conclusion": the ranking rule I added in Phase 6 to stop
+  confident wrong answers fired because the database result holds no cost column. The condition is established by the KID
+  answer, which the composer did not know. In r27 the KID agent abstained: its grader rejected the five-fund cost
+  retrieval twice, and the retry returned the same 2 chunks per fund as the first search (the per-fund share was
+  `max(2, ceil(k/5))`, which does not grow when k goes from 5 to 8), so a retry could never widen a five-fund search.
+  Changes made after this second run: the compose and verify prompts now receive the list of qualifying funds with the
+  statement that the KID answer establishes the condition, and the per-fund share grows with a widened k (3 chunks per
+  fund on a retry). This touches the retrieval layer of the KID agent, which was frozen, so the KID development, blind and
+  holdout sets need a regression run. 140 tests (two new ones on this); not run against the model yet.
 - **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
   now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
   I relabelled it after seeing this result, so 42/45 is the as-run score. The macro prompt also now says that a "current"
