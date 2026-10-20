@@ -128,6 +128,7 @@ a pass until I checked the labels against the text. The one remaining dev miss i
 | Re-run of the two multi-hop items after adding the KID-first route (first version) | 45/45 | 44/45 |
 | Same two items after adding validated instrument selection (second version) | 45/45 | 43/45 |
 | Same two items after the compose/verify and retry fixes (third version; other 43 answers from earlier versions) | 45/45 | 45/45 |
+| **Full run with one agent version** (commit 95dd98c, all 45 answers; mean 17.6 s per question) | 45/45 | **45/45** |
 
 The three first-run misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the
 cheapest fund"; one was a safe refusal, the other a list with wrong and missing clients), and one "current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
@@ -135,7 +136,7 @@ bulletin figure or a decline (the router flips between the two across runs, and 
 decline message by accident, so I tightened it). The new KID-first route fixed one multi-hop item on its first run (r26) and
 exposed a SQL-filter and list-completeness error on the other (r27). The next version made both fail for other reasons (a
 composer rule that refused a ranking the KID answer already settled; a retry that could not widen a five-fund search), both
-fixed and awaiting another run. Multi-hop is the weakest category, and the fixes were designed on the same two items. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
+fixed; the full re-run with one agent version then passed 45/45. Multi-hop is the weakest category, and the fixes were designed on the same two items, so that pass says little about unseen multi-hop questions. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
 run and 39/40 after fixing causes it exposed: a shared SQL-visibility bug, a rounding rule, and a confident wrong answer to a ranking
 question that now becomes a refusal. Refusal of investment advice 5/5, prompt-injection items 3/3, database unchanged.
 The router questions were used to fix problems, so these are development-set numbers.
@@ -217,6 +218,7 @@ uv run python scripts/eval_naive.py --mode agent --set blind     # blind set (52
 uv run python scripts/eval_retrieval_macro.py            # macro retrieval ablation, no LLM
 uv run python scripts/eval_macro.py --set macro_holdout  # macro route end to end
 uv run python scripts/eval_router.py                     # router set (45)
+uv run python scripts/eval_verifier.py                   # verifier stress test (16 calls)
 ```
 
 ## Repository layout
@@ -235,9 +237,9 @@ src/wealthai/
 app/             Streamlit front-end (talks to the API only)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
-tests/           140 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
-data/golden/     development (55), blind (52), holdout (14), router (45), macro (52) and macro holdout (18) sets
-docs/            results log and agent graphs
+tests/           144 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
+data/golden/     development (55), blind (52), holdout (14), router (45), macro (52), macro holdout (18) and verifier stress-test (16) sets
+docs/            results log, agent graphs, cloud deployment notes (design only)
 ```
 
 ## Roadmap
@@ -249,12 +251,12 @@ docs/            results log and agent graphs
 - [ ] Agent vs single-pass with the same terminology glossary, on the blind set
 - [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
 - [ ] Clean full run of the macro development set with one agent version; repeated runs for variance
-- [ ] A test that feeds the verification step deliberately wrong answers
+- [ ] Run the verification stress test (`scripts/eval_verifier.py`: 9 deliberately wrong and 7 faithful answers; written, not yet run)
 - [x] KID-first route for questions that need KID facts before the SQL: both multi-hop items pass on the third version (development result; each earlier run failed on a different bug)
 - [ ] Full router re-run with one agent version, and KID regression runs after the retrieval change
 - [ ] Larger KID library, including Swiss-domiciled products
 - [x] Dockerfile and docker-compose, built and smoke-tested in CI
-- [ ] Deployment notes for AWS or GCP
+- [x] Deployment notes for AWS or GCP: [docs/deployment.md](docs/deployment.md) (design only, not deployed)
 
 ## Limitations
 

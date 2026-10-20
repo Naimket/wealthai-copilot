@@ -365,6 +365,14 @@ Database unchanged (25 clients, 138 holdings).
   fixes were designed on these two items, and the other 43 answers in the cache come from earlier versions, before the
   verifier and compose prompts changed for every route. The router set therefore needs a full re-run (`--fresh`) with one
   agent version before the 45/45 can be quoted.
+  **Full run with one agent version (2026-10-20, commit 95dd98c, `gemini-flash-lite-latest`, free tier, cache emptied first
+  with `--fresh`; r01-r13 and r14-r45 were produced in two sittings because the daily quota ran out, with no code change in
+  between): 45/45 routing, 45/45 answers, mean 17.6 s per question, database unchanged (25 clients, 138 holdings).** Two
+  transient 429 retries (r21, r26) did not affect results. r44 (Bank of England rate, a trap: the documents cover only
+  the SNB, the Fed and the ECB) was routed to `out_of_scope` and declined, which the item accepts. Caveat: this is still a
+  development set, because r26, r27, r35 and the router vocabulary were fixed after seeing failures, so 45/45 shows the
+  system is stable on these items, not that it generalises. The first-run score on this set (42/45) is the number to quote
+  as a clean estimate.
 - **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
   now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
   I relabelled it after seeing this result, so 42/45 is the as-run score. The macro prompt also now says that a "current"
