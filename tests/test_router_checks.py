@@ -137,3 +137,23 @@ def test_multihop_set_is_well_formed_and_new():
 @pytest.mark.parametrize("item", MULTIHOP, ids=lambda i: i["id"])
 def test_every_multihop_oracle_is_accepted_by_the_sql_tool(item, db):
     run_query(item["oracle_sql"], db_path=db)
+
+
+MULTIHOP2 = [json.loads(line) for line in (SET.parent / "multihop2_set.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_second_multihop_set_is_new_and_well_formed():
+    ids = [i["id"] for i in MULTIHOP2]
+    questions = {i["question"] for i in ITEMS} | {i["question"] for i in MULTIHOP}
+    assert len(ids) == len(set(ids)) == 10 and not set(ids) & ({i["id"] for i in ITEMS} | {i["id"] for i in MULTIHOP})
+    assert not {i["question"] for i in MULTIHOP2} & questions
+    valid = {"kid", "macro", "portfolio", "both", "kid_first", "advice", "out_of_scope"}
+    for i in MULTIHOP2:
+        assert set(i["routes"]) <= valid and i["expect"] in ("names", "numbers", "fund_costs")
+        assert i["oracle_sql"].lstrip().upper().startswith("SELECT")
+    assert sum(i["category"] == "control" for i in MULTIHOP2) == 1   # the named-funds control item
+
+
+@pytest.mark.parametrize("item", MULTIHOP2, ids=lambda i: i["id"])
+def test_every_second_set_oracle_is_accepted_by_the_sql_tool(item, db):
+    run_query(item["oracle_sql"], db_path=db)

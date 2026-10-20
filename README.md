@@ -145,14 +145,17 @@ run and 39/40 after fixing causes it exposed: a shared SQL-visibility bug, a rou
 question that now becomes a refusal. Refusal of investment advice 5/5, prompt-injection items 3/3, database unchanged.
 The router questions were used to fix problems, so these are development-set numbers.
 
-**Unseen multi-hop questions** (10 new, written and frozen before the first run; a KID fact selects the funds, then SQL finds
-the clients): **5/10** on the first run. The route tuned on two items handles highest/lowest/threshold/range/sum questions
-and fails on ordinals ("second-highest"), exact values, "both extremes", mixed named/described funds and negation. Causes
-found in the traces: a field description that omitted `kid_first`, a SQL step that invented `LIKE '%0.12%'` filters (a
-confident wrong "no data"), and an instrument selection that picked the complement for "none of". Fixes and their tests are
-in [docs/results.md](docs/results.md); those 10 are now a development set. After the first round of fixes the same items scored 8/10
-(routing 10/10, and the 45 router items still route as accepted); the two remaining misses were a compose rule, fixed in a second round, after which the set shows 10/10 (a composite of three agent
-versions on questions used to design the fixes, so a development result; a fresh unseen set and a full router re-run are still to do).
+**Unseen multi-hop questions** (a KID fact selects the funds, then SQL finds the clients). First set: 10 new questions, written
+and frozen before the first run: **5/10** on the first run. The route tuned on two items handled highest/lowest/threshold/range/sum
+questions and failed on ordinals ("second-highest"), exact values, "both extremes", mixed named/described funds and negation.
+Causes found in the traces: a field description that omitted `kid_first`, a SQL step that invented `LIKE '%0.12%'` filters (a
+confident wrong "no data"), and an instrument selection that picked the complement for "none of". After the fixes the same items
+showed 8/10 and then 10/10, a composite of three agent versions on questions used to design the fixes, so a development result
+(the 45 router items still route as accepted). Details in [docs/results.md](docs/results.md).
+Second set: 10 further questions, written after those fixes and run once on the final code with Gemini 3.1 Flash Lite (the
+3.5 quota was exhausted, so not directly comparable): **9/10**. All nine KID-then-SQL, aggregate and reverse-hop questions were
+correct; the miss was a control question with two named funds where the SQL compared an instrument name with `=` and answered
+"no matching client data" (fixed afterwards with a prompt rule and a retry guard, not yet re-run).
 
 **Single-pass baseline on the same blind set** (same retrieval, one LLM call, ~4 s per question): 50/52, against 49/52 for the
 agent's first run. That is a tie. The agent's three blind misses were caused by its own steps (query rewriting, a strict
@@ -231,7 +234,8 @@ uv run python scripts/eval_naive.py --mode agent --set blind     # blind set (52
 uv run python scripts/eval_retrieval_macro.py            # macro retrieval ablation, no LLM
 uv run python scripts/eval_macro.py --set macro_holdout  # macro route end to end
 uv run python scripts/eval_router.py                     # router set (45)
-uv run python scripts/eval_router.py --set multihop      # 10 unseen multi-hop questions (KID fact, then SQL)
+uv run python scripts/eval_router.py --set multihop      # 10 multi-hop questions (KID fact, then SQL); used to design fixes
+uv run python scripts/eval_router.py --set multihop2     # 10 further multi-hop questions, to be run once on the final code
 uv run python scripts/eval_verifier.py                   # verifier stress test (16 calls)
 ```
 
@@ -251,8 +255,8 @@ src/wealthai/
 app/             Streamlit front-end (talks to the API only)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
-tests/           163 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
-data/golden/     development (55), blind (52), holdout (14), router (45), macro (52), macro holdout (18), verifier stress-test (16) and unseen multi-hop (10) sets
+tests/           177 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
+data/golden/     development (55), blind (52), holdout (14), router (45), macro (52), macro holdout (18), verifier stress-test (16), multi-hop (10, now a development set) and a second unseen multi-hop (10) set
 docs/            results log, agent graphs, cloud deployment notes (design only)
 ```
 

@@ -429,3 +429,27 @@ def test_compose_prompt_does_not_let_the_ranking_rule_override_the_qualifying_fu
     prompt = multi.COMPOSE_PROMPT
     assert "second-highest cost, both\n  extremes" in prompt and "do not say the KID ANSWER fails to rank the funds" in prompt
     assert "(this does not apply when FUNDS THAT QUALIFY is given: the ranking is then established)" in prompt
+
+
+def test_empty_result_from_an_exact_instrument_name_is_retried_with_the_error(setup):
+    """p10: `i1.name = 'Vanguard FTSE All-World'` matched nothing and the answer was a confident 'no matching client data'."""
+    install, _ = setup
+    exact = "SELECT c.name FROM clients c JOIN holdings h ON c.client_id = h.client_id JOIN instruments i ON h.instrument_id = i.instrument_id WHERE i.name = 'Test World'"
+    llm = install(Route=[R("portfolio")], SqlQuery=[multi.SqlQuery(sql=exact), multi.SqlQuery(sql=GOOD_SQL)],
+                  FinalAnswer=[FA("10 clients.")], Verification=[V(True)])
+    out = multi.run_multi("Which clients hold the Test World fund?")
+    assert llm.count("SqlQuery") == 2 and out["sql"] == GOOD_SQL
+    assert any("compares an instrument name with =" in step for step in out["trace"])
+    retry_prompt = [p for s, p in llm.prompts if s == "SqlQuery"][1]
+    assert "use lower(instruments.name) LIKE" in retry_prompt
+
+
+def test_exact_name_guard_does_not_fire_for_unknown_clients_or_non_empty_results():
+    assert multi._INSTRUMENT_NAME_EQ.search("... WHERE i2.name = 'Xtrackers MSCI World' ...")
+    assert multi._INSTRUMENT_NAME_EQ.search("... WHERE instruments.name = 'X'")
+    assert not multi._INSTRUMENT_NAME_EQ.search("... WHERE c.name = 'Nobody' ...")
+    assert not multi._INSTRUMENT_NAME_EQ.search("... WHERE clients.name = 'Nobody' ...")
+
+
+def test_sql_prompt_asks_for_like_on_instrument_names():
+    assert "never compare an instrument name with =" in multi.SQL_PROMPT

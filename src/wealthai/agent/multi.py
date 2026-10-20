@@ -81,6 +81,8 @@ SQL_PROMPT = """Write ONE SQLite SELECT query that answers the question.
 {schema}
 Rules:
 - Match clients by name with: lower(clients.name) LIKE lower('%name as written%').
+- Match instruments the same way: lower(instruments.name) LIKE lower('%name as written%'). Full instrument names contain extra words
+  ('UCITS ETF', 'USD Accu'), so never compare an instrument name with =.
 - Portfolio value = SUM(holdings.market_value_chf). Round CHF amounts to 0 decimals and averages and percentages to 1 decimal; never round counts or ages. Use shares of a total when asked for allocations.
 - Return only the columns needed, with readable aliases. End with LIMIT 50 unless you aggregate to one row.
 - Use LIMIT 1 or another small LIMIT only when the question asks for a top-N or a single extreme (largest, oldest, ...).
@@ -318,6 +320,7 @@ def sql_gen(state: State) -> dict:
     return {"sql": out.sql.strip(), "sql_attempts": state.get("sql_attempts", 0) + 1, "trace": [f"sql_gen -> {out.sql.strip()!r}"]}
 
 
+_INSTRUMENT_NAME_EQ = re.compile(r"\b(?:i\d*|instruments)\.name\s*=\s*'", re.I)
 _NUMERIC_LIKE = re.compile(r"\blike\s+(?:lower\s*\(\s*)?'%?\s*\d[\d.,]*\s*%?'", re.I)
 
 
@@ -329,6 +332,10 @@ def sql_run(state: State) -> dict:
         result = run_query(state["sql"], db_path=DB_PATH)
     except SqlToolError as exc:
         return {"sql_error": str(exc), "trace": [f"sql_run error: {exc}"]}
+    if not result.rows and _INSTRUMENT_NAME_EQ.search(state["sql"]):  # p10: = 'Vanguard FTSE All-World' never matches 'Vanguard FTSE All-World UCITS ETF'
+        msg = ("the query returned no rows and compares an instrument name with =; instrument names are longer than the words "
+               "in the question (for example 'Vanguard FTSE All-World UCITS ETF'): use lower(instruments.name) LIKE lower('%name%')")
+        return {"sql_error": msg, "trace": [f"sql_run error: {msg}"]}
     return {"sql_error": "", "table": result.to_markdown(), "trace": [f"sql_run ok -> {len(result.rows)} rows"]}
 
 

@@ -507,3 +507,26 @@ agent versions (n01, n02, n05, n06, n07 from the original run; n04, n09, n10 aft
 questions that were used to design the fixes. It shows that each failure is fixed, not that multi-hop questions
 generalise: that needs a fresh set of unseen questions, run once on the final code, plus a full router re-run because the
 router, selection, SQL and compose prompts all changed since the last full run. Both are still to do.
+
+## Phase 11 - second unseen multi-hop set (`--set multihop2`, 10 questions, `gemini-3.1-flash-lite`, one run, 2026-10-20)
+
+Written after the Phase 10 fixes and frozen in git before running: a union of a named fund with an extreme (p01), a count
+(p02, p08), an average age (p03), city plus cost (p04), a CHF total (p05, "0.12% or less"), "funds cheaper than X" (p06),
+a risk profile with a strict threshold (p07, 0.14% is excluded), the reverse hop database-first (p09), and a control with two
+named funds where no KID fact is needed (p10). Ground truth by oracle SQL; list answers also fail on extra clients.
+
+**Model: Gemini 3.1 Flash Lite, not the 3.5 reference model**, because both keys had used about 90% of the 3.5 daily quota. The
+result measures whether the final code generalises; it is not comparable one-to-one with the 5/10 of Phase 10, which used 3.5.
+
+**First run: 9/10** (routing 10/10; all nine multi-hop questions correct, including both reverse and aggregate hops). The
+miss is the control, **p10** ("clients holding both the Vanguard FTSE All-World and the Xtrackers MSCI World fund"): routed
+to `portfolio` correctly, but the SQL compared `i1.name = 'Vanguard FTSE All-World'`, which never matches the stored name
+'Vanguard FTSE All-World UCITS ETF', so it returned no rows and the answer was "No matching client data was found": a
+confident wrong answer to a question with no KID step at all. The SQL prompt asked for LIKE matching on client names only.
+
+Fixes made after seeing it (so p10 is now a development item): the SQL prompt requires `LIKE` on instrument names as well,
+and an empty result from a query that compares an instrument name with `=` is rejected and retried once with an explanatory
+error (then a safe message). Three tests (177 in total). Not re-run on the model yet.
+
+Operational: 503 overload errors made this run slow on 3.1 Flash Lite (mean 162 s per question; p08 took 553 s with several
+back-offs). They do not count against the quota but make that model impractical for long runs.
