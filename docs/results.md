@@ -213,6 +213,32 @@ the next clean check is a fresh run of the 55 development questions (regression)
 Operational note: h14 took 277 s against ~17 s for the others, consistent with rate-limit back-off near the daily
 quota. Latency figures from days with a nearly exhausted quota should not be quoted.
 
+### Single-pass baseline on the blind set (52 questions, `gemini-flash-lite-latest`, one run, 1 LLM call per question)
+
+Same retrieval as the agent (hybrid + per-fund balancing + reranker), no rewrite, grade or verify steps. Run on 2026-10-20,
+after the agent fixes; the single-pass pipeline was not changed by anything seen on this set.
+
+| Question type | Single-pass | Agent, run 1 (before fixes) |
+|---|---|---|
+| Factual (33) | 33/33 | 33/33 |
+| Hard (5) | 4/5 | 5/5 |
+| Comparative (4) | 4/4 | 1/4 |
+| Unanswerable (10) | 9/10 | 10/10 |
+| **Total** | **50/52** | **49/52** |
+| LLM calls / latency per question | 1 / ~4 s | ~4 / ~17 s |
+
+The difference is one question out of 52, so this is a tie, not a ranking. What the two columns do say:
+- **The agent's extra machinery caused its three blind misses.** The single-pass pipeline answered the three comparative
+  questions the agent missed (b39, b40, b42): no rewriter to drift to "ongoing costs", no strict grader. Added steps add
+  failure modes as well as safeguards.
+- **The agent wins where rewriting and abstention matter.** b35 (entry fees, asked in French): the single-pass retrieval
+  missed the chunk (the English-only reranker does not bridge the language) and it wrongly said the documents lack the
+  information; the agent's rewrite translates the query and answered. b44 (anticipated tracking error): single-pass said the
+  details "are set out in the Prospectus", which the KID probably says literally but which gives no figure, so the check
+  counts it as a failed abstention; the agent abstained.
+- Caveats: one run each, so run-to-run variance is unmeasured; the agent number is from before its fixes (re-running it
+  would not be blind any more); the comparison is on 52 questions about five funds.
+
 ## Phase 8 - macro source: SNB publications of September 2026
 
 Corpus: two public Swiss National Bank documents, the monetary policy assessment of 24 September 2026 (3 pages) and
@@ -312,6 +338,10 @@ Database unchanged (25 clients, 138 holdings).
   is the planned fix.
 - **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
   now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
-  I relabelled it (expects the dated figure) after seeing this result, so 42/45 is the as-run score. The macro prompt
-  also now says that a "current" question gets the dated figure and a note that the documents are not a live quote;
-  that wording change has not been run yet.
+  I relabelled it after seeing this result, so 42/45 is the as-run score. The macro prompt also now says that a "current"
+  question gets the dated figure and a note that the documents are not a live quote.
+  **Re-run of r35 (same day):** this time the router sent it to `out_of_scope` (decline) in 1.5 s, so the router is
+  not deterministic on this ambiguous question and the new prompt wording was not exercised. That run reported 43/45, but
+  the check I had written (expect "September") matched the decline message by accident ("... SNB publications of
+  September 2026 ..."): a false pass. The item now accepts either safe behaviour, the dated figure ("0.94") or the decline,
+  and nothing else; on that rule the decline passes, so 43/45 stands, but for the right reason this time.

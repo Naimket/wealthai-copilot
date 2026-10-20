@@ -123,15 +123,22 @@ a pass until I checked the labels against the text. The one remaining dev miss i
 
 | | Routing | Answer correct |
 |---|---|---|
-| First run with the macro route | 45/45 | 42/45 |
+| First run with the macro route | 45/45 | 42/45 (43/45 after the r35 item was corrected, see below) |
 
 The three misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the cheapest
 fund"; one is a safe refusal, one a silently truncated client list), which a KID-first route would fix, and one
-"current EUR/CHF rate" item whose expectation (decline) predates the macro route; it is relabelled to expect the dated
-bulletin figure. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
+"current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
+bulletin figure or a decline (the router flips between the two across runs, and my first corrected check matched the
+decline message by accident, so I tightened it). On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
 run and 39/40 after fixing causes it exposed: a shared SQL-visibility bug, a rounding rule, and a confident wrong answer to a ranking
 question that now becomes a refusal. Refusal of investment advice 5/5, prompt-injection items 3/3, database unchanged.
 The router questions were used to fix problems, so these are development-set numbers.
+
+**Single-pass baseline on the same blind set** (same retrieval, one LLM call, ~4 s per question): 50/52, against 49/52 for the
+agent's first run. That is a tie. The agent's three blind misses were caused by its own steps (query rewriting, a strict
+grader), while the single pass missed a French question the agent's rewrite handled and failed one abstention trap the
+agent passed. So the extra machinery buys abstention and multilingual robustness, not accuracy on questions that are easy
+to retrieve ([details](docs/results.md)).
 
 **Honest reading of these numbers**
 - The 55 questions guided the design, so 100% is a development-set result, not a generalisation claim.
@@ -230,7 +237,8 @@ docs/            results log and agent graphs
 ## Roadmap
 
 - [x] Blind test set (52 questions, frozen before running), first agent run: 49/52
-- [ ] Single-pass baselines on the blind set and repeated runs to report variance
+- [x] Single-pass baseline on the blind set (50/52 vs 49/52 for the agent)
+- [ ] Repeated runs to report variance
 - [x] Ragas scores for the agent (development set)
 - [ ] Agent vs single-pass with the same terminology glossary, on the blind set
 - [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
