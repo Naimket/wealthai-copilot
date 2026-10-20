@@ -101,7 +101,8 @@ were answered, so wrongful abstentions are tracked with deterministic checks aga
 
 All three misses are cross-document questions: the query rewriter replaced "total costs" with "ongoing costs", and the
 grader asked for every fund to appear on a "which KID is addressed to Switzerland" question. The prompts were then
-changed, so these 52 questions are no longer blind for those cases; a separate 14-question holdout checks the fix
+changed, so these 52 questions are no longer blind for those cases (a re-run after the fixes scored 51/52: comparative 3/4, the
+remaining miss is a safe abstention on a retrieval gap; a regression result, not a generalisation claim); a separate 14-question holdout checks the fix
 ([details](docs/results.md)). That holdout scored 13/14 on its first run; after a deterministic coverage fix for
 "which fund ..." questions (designed on the one miss, h02), a fresh run with the current code scored **14/14** (h02 now
 retrieves all five funds). In that run the verification step fired twice on real drafts (h05, h07), each time with a

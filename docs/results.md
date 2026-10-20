@@ -185,6 +185,17 @@ questions measures regression, not generalisation. Generalisation is checked on 
 (`data/golden/holdout_set.jsonl`: 12 cross-document questions of the same two kinds plus 2 traps), written before the
 fixed agent was run on it. Results will be added here with the model stated.
 
+### Blind set re-run after the fixes and the retrieval change (run 2, 2026-10-20, `gemini-flash-lite-latest`)
+
+**51/52** (factual 33/33, hard 5/5, unanswerable 10/10, comparative 3/4; the first run had comparative 1/4). Retrieval hit 100%.
+Verifier regenerations: 0; retrieval retries: 11; abstentions: 10 (the 10 traps; plus b39, see below, counted as a miss).
+This is a regression run, not a generalisation claim: the fixes were designed on exactly these failures. It shows that the
+two fixes (b40 total costs, b42 Switzerland lookup) work on their own questions and that none of the 49 earlier passes
+broke after the prompt and retrieval changes (per-fund share on retry, cross-fund coverage).
+The remaining miss, **b39** (lowest total costs over 5 years), is a safe abstention, not a wrong answer: the grader rejected
+both searches because the Xtrackers 5-year total was missing from the 15 retrieved chunks, while the same search for b40
+(highest) found it on the second try. So it is retrieval variability on the Xtrackers cost table, not a prompt problem.
+
 ### Holdout check of the first fix (14 questions, fixed agent, `gemini-flash-lite-latest`, one run)
 
 | Question type | Answer correct |
