@@ -284,36 +284,64 @@ def KQ(question="What are the ongoing costs of each of the five funds?"):
     return multi.KidQuestion(needed=True, question=question)
 
 
-def test_kid_first_asks_the_kids_then_filters_the_database_by_their_facts(setup):
+def SEL(*names):
+    return multi.InstrumentSelection(names=list(names), reason="test")
+
+
+def test_kid_first_asks_the_kids_selects_instruments_then_filters_the_database(setup):
     install, kid_calls = setup
-    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
-                  FinalAnswer=[FA("10 clients hold it.")], Verification=[V(True)])
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], InstrumentSelection=[SEL("Test World ETF")],
+                  SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA("10 clients hold it.")],
+                  Verification=[V(True)])
     out = multi.run_multi("Which clients hold the fund with the lowest ongoing costs?")
     assert out["route"] == "kid_first" and out["answer"] == "10 clients hold it."
-    assert llm.calls == ["Route", "KidQuestion", "SqlQuery", "FinalAnswer", "Verification"]
+    assert llm.calls == ["Route", "KidQuestion", "InstrumentSelection", "SqlQuery", "FinalAnswer", "Verification"]
     assert kid_calls == ["What are the ongoing costs of each of the five funds?"]  # the KID agent sees the generated question
     sql_prompt = [p for s, p in llm.prompts if s == "SqlQuery"][0]
-    assert "KID FACTS" in sql_prompt and KID_RESULT["answer"] in sql_prompt  # the SQL step sees the KID answer
+    assert KID_RESULT["answer"] in sql_prompt and "instruments.isin IN ('IE00TEST0001')" in sql_prompt
     compose_prompt = [p for s, p in llm.prompts if s == "FinalAnswer"][0]
     assert KID_RESULT["answer"] in compose_prompt
     assert out["sources"][-1] == "portfolios.db" and "test.pdf" in out["sources"]
 
 
+def test_selected_names_are_validated_against_the_database(setup):
+    install, _ = setup
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()],
+                  InstrumentSelection=[SEL("test world etf", "Imaginary Fund ETF", "Test World ETF")],
+                  SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA()], Verification=[V(True)])
+    out = multi.run_multi("Which clients hold the cheapest fund?")
+    sql_prompt = [p for s, p in llm.prompts if s == "SqlQuery"][0]
+    assert "Imaginary" not in sql_prompt                      # an invented name never reaches the SQL step
+    assert sql_prompt.count("IE00TEST0001") == 1              # case-insensitive match, no duplicates
+    assert any("select_instruments" in step for step in out["trace"])
+
+
+def test_kid_first_abstains_when_no_instrument_qualifies(setup):
+    install, _ = setup
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], InstrumentSelection=[SEL("Imaginary Fund ETF")],
+                  SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)])
+    out = multi.run_multi("Which clients hold the fund with the lowest ongoing costs?")
+    assert out["answer"] == ABSTAIN_MSG and not out["answerable"]
+    assert "SqlQuery" not in llm.calls
+
+
 def test_kid_first_falls_back_to_the_advisor_question_when_none_is_generated(setup):
     install, kid_calls = setup
     install(Route=[R("kid_first")], KidQuestion=[multi.KidQuestion(needed=True, question="  ")],
-            SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)], FinalAnswer=[FA()], Verification=[V(True)])
+            InstrumentSelection=[SEL("Test World ETF")], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)],
+            FinalAnswer=[FA()], Verification=[V(True)])
     multi.run_multi("Which clients hold a fund with ongoing costs above 0.15%?")
     assert kid_calls == ["Which clients hold a fund with ongoing costs above 0.15%?"]
 
 
 def test_kid_first_abstains_without_querying_when_the_kids_cannot_answer(setup, monkeypatch):
     install, _ = setup
-    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)])
+    llm = install(Route=[R("kid_first")], KidQuestion=[KQ()], InstrumentSelection=[SEL("Test World ETF")],
+                  SqlQuery=[multi.SqlQuery(sql=GOOD_SQL)])
     monkeypatch.setattr(multi, "run_kid_agent", lambda q: dict(KID_RESULT, answerable=False, answer=ABSTAIN_MSG))
     out = multi.run_multi("Which clients hold the fund with the lowest tracking error?")
     assert out["answer"] == ABSTAIN_MSG and not out["answerable"]
-    assert "SqlQuery" not in llm.calls
+    assert "SqlQuery" not in llm.calls and "InstrumentSelection" not in llm.calls
 
 
 def test_kid_first_still_refuses_advice_before_any_call(setup):
@@ -321,3 +349,8 @@ def test_kid_first_still_refuses_advice_before_any_call(setup):
     llm = install(Route=[R("kid_first")])
     out = multi.run_multi("Which fund should Alice buy, the one with the lowest ongoing costs?")
     assert out["answer"] == REFUSE_MSG and llm.calls == [] and kid_calls == []
+
+
+def test_listing_questions_get_a_completeness_rule_in_compose_and_verify():
+    assert "never shorten the list" in multi.COMPOSE_PROMPT
+    assert "leaves out any" in multi.VERIFY_PROMPT

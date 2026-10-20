@@ -6,8 +6,8 @@
           |   --out_of_scope-> out_of_scope
           |   --kid----------> kid_agent ---------------------------> END   (the evaluated KID agent, unchanged)
           |   --macro--------> macro_agent --------------------------> END   (SNB publications, own retrieval)
-          |   --kid_first----> kid_first_question --> kid_agent --> sql_gen (KID facts choose the instruments,
-          |                                                                   then the database finds the clients)
+          |   --kid_first----> kid_first_question --> kid_agent --> select_instruments --> sql_gen
+          |                    (KID facts choose the instruments, validated against the database; then SQL finds the clients)
           |
         sql_gen <--(error, once)-- sql_run <--+
           |                          |
@@ -92,6 +92,18 @@ for example "What are the ongoing costs of each of the five funds?". Ask only fo
 
 Advisor question: {question}"""
 
+SELECT_PROMPT = """The advisor asked the question below. The KID answer lists a fact for each fund.
+Choose the instruments that satisfy the condition in the question (for example the lowest cost, or a cost above a
+threshold), comparing the numbers yourself. Return their names EXACTLY as written in the list of instruments.
+If the KID answer does not give the fact for the funds, return an empty list.
+
+Advisor question: {question}
+
+KID ANSWER:\n{kid}
+
+INSTRUMENTS WITH A KID (name | isin):
+{instruments}"""
+
 KID_QUESTION_PROMPT = """The advisor asked the question below. The database result shows the client's data.
 Write ONE self-contained question for the fund-document (KID) assistant about the instruments in the result.
 - Use the exact instrument names from the result, only for instruments whose kid_source is not empty.
@@ -123,6 +135,7 @@ Rules:
 - Write amounts as CHF with thousands separators (for example CHF 1,494,694).
 - Describe each figure by what the query selected: a count produced with WHERE city = 'Geneva' is the number of clients in Geneva, even if the result table shows only the number.
 - If the question asks for a ranking or an extreme (lowest, highest, cheapest, most, best) and the evidence does not directly establish it, say that the available data does not allow that conclusion. Never answer about a different subset than the one asked (for example a single row picked by LIMIT 1).
+- If the question asks which clients or funds, name every one in the database result; never shorten the list.
 - Set answerable=false only if the evidence cannot answer the question.
 {feedback}
 Question: {question}"""
@@ -130,7 +143,8 @@ Question: {question}"""
 VERIFY_PROMPT = """Check the ANSWER against the EVIDENCE. supported=true only if every number, name and claim in the answer
 appears in, or follows directly from, the evidence (re-do any sum, share or ranking yourself). The SQL shows what
 each number or row refers to. Also set supported=false if the answer addresses a different subset or question than
-the one asked (for example one LIMIT 1 row presented as the answer to a ranking question).
+the one asked (for example one LIMIT 1 row presented as the answer to a ranking question), and if the question asks
+which clients or funds and the answer leaves out any in the DATABASE RESULT or names one that is not there.
 List any unsupported claim in `unsupported`.
 
 Question: {question}
@@ -152,6 +166,11 @@ ANSWER: {answer}"""
 
 class Route(BaseModel):
     route: str = Field(description="One of: kid, macro, portfolio, both, advice, out_of_scope")
+    reason: str = Field(default="", description="One short sentence")
+
+
+class InstrumentSelection(BaseModel):
+    names: list[str] = Field(default_factory=list, description="Instrument names, exactly as listed")
     reason: str = Field(default="", description="One short sentence")
 
 
@@ -184,6 +203,7 @@ class State(TypedDict, total=False):
     kid_question: str
     kid: dict
     macro: dict
+    qualifying: list[dict]
     answer: str
     answerable: bool
     drafts: int
@@ -261,10 +281,12 @@ def sql_gen(state: State) -> dict:
     feedback = f"Your previous query failed: {state['sql_error']}. Fix it." if state.get("sql_error") else ""
     kid_facts = ""
     if state.get("route") == "kid_first" and state.get("kid"):
-        kid_facts = ("KID FACTS (from the fund documents, one value per fund):\n" + _kid_text(state) + "\n"
-                     "Use them to decide which funds qualify for the question, then select the clients holding exactly those\n"
-                     "instruments, filtering by instruments.name (LIKE on the distinctive words of the fund name) or instruments.isin.\n"
-                     "The facts above are the only source of costs or risk; do not invent a column for them.\n")
+        isins = ", ".join(f"'{q['isin']}'" for q in state.get("qualifying", []))
+        names = "; ".join(q["name"] for q in state.get("qualifying", []))
+        kid_facts = ("KID FACTS (from the fund documents): " + _kid_text(state) + "\n"
+                     f"The funds that qualify for the question, already decided from these facts: {names}.\n"
+                     f"Select the DISTINCT clients holding them and filter with instruments.isin IN ({isins}); do not filter by name\n"
+                     "with LIKE and do not apply any other cost or risk condition. Return client names only, one row per client.\n")
     prompt = SQL_PROMPT.format(schema=SCHEMA_DESCRIPTION, question=state["question"], kid_facts=kid_facts, feedback=feedback)
     out = generate(prompt, schema=SqlQuery)
     return {"sql": out.sql.strip(), "sql_attempts": state.get("sql_attempts", 0) + 1, "trace": [f"sql_gen -> {out.sql.strip()!r}"]}
@@ -286,6 +308,21 @@ def kid_first_question(state: State) -> dict:
     out = generate(KID_FIRST_PROMPT.format(question=state["question"]), schema=KidQuestion)
     question = out.question.strip() or state["question"]  # fall back to the advisor question itself
     return {"kid_question": question, "trace": [f"kid_first_question -> {question!r}"]}
+
+
+def select_instruments(state: State) -> dict:
+    """The KID facts decide which instruments qualify; the names are validated against the database in code."""
+    known = run_query("SELECT name, isin FROM instruments WHERE kid_source IS NOT NULL ORDER BY name", db_path=DB_PATH).rows
+    listing = "\n".join(f"{name} | {isin}" for name, isin in known)
+    out = generate(SELECT_PROMPT.format(question=state["question"], kid=_kid_text(state), instruments=listing),
+                   schema=InstrumentSelection)
+    by_name = {name.strip().lower(): {"name": name, "isin": isin} for name, isin in known}
+    chosen = []
+    for name in out.names:
+        hit = by_name.get(name.strip().lower())
+        if hit and hit not in chosen:
+            chosen.append(hit)
+    return {"qualifying": chosen, "trace": [f"select_instruments -> {[c['name'] for c in chosen]} ({out.reason})"]}
 
 
 def kid_question(state: State) -> dict:
@@ -343,8 +380,12 @@ def after_kid_agent(state: State) -> str:
     if state["route"] == "kid":
         return END
     if state["route"] == "kid_first":  # no KID facts, no way to choose the instruments: do not guess
-        return "sql_gen" if state["kid"]["answerable"] else "abstain"
+        return "select_instruments" if state["kid"]["answerable"] else "abstain"
     return "compose"
+
+
+def after_select(state: State) -> str:
+    return "sql_gen" if state.get("qualifying") else "abstain"  # nothing qualifies or the facts are missing: do not guess
 
 
 def after_compose(state: State) -> str:
@@ -360,7 +401,7 @@ def after_verify(state: State) -> str:
 def build_graph():
     g = StateGraph(State)
     for name, fn in [("guard", guard), ("refuse", refuse), ("route", route), ("out_of_scope", out_of_scope),
-                     ("kid_agent", kid_agent), ("macro_agent", macro_agent), ("kid_first_question", kid_first_question),
+                     ("kid_agent", kid_agent), ("macro_agent", macro_agent), ("kid_first_question", kid_first_question), ("select_instruments", select_instruments),
                      ("sql_gen", sql_gen), ("sql_run", sql_run), ("sql_failed", sql_failed),
                      ("kid_question", kid_question), ("compose", compose), ("verify_final", verify_final),
                      ("abstain", abstain)]:
@@ -375,7 +416,9 @@ def build_graph():
                                                        "kid_question": "kid_question", "compose": "compose"})
     g.add_conditional_edges("kid_question", after_kid_question, {"kid_agent": "kid_agent", "compose": "compose"})
     g.add_edge("kid_first_question", "kid_agent")
-    g.add_conditional_edges("kid_agent", after_kid_agent, {END: END, "compose": "compose", "sql_gen": "sql_gen", "abstain": "abstain"})
+    g.add_conditional_edges("kid_agent", after_kid_agent, {END: END, "compose": "compose", "select_instruments": "select_instruments",
+                                                "abstain": "abstain"})
+    g.add_conditional_edges("select_instruments", after_select, {"sql_gen": "sql_gen", "abstain": "abstain"})
     g.add_conditional_edges("compose", after_compose, {"verify_final": "verify_final", END: END})
     g.add_conditional_edges("verify_final", after_verify, {"compose": "compose", "abstain": "abstain", END: END})
     for terminal in ("refuse", "out_of_scope", "macro_agent", "sql_failed", "abstain"):

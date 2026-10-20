@@ -21,7 +21,7 @@ FastAPI + Streamlit front-end. It runs locally on a laptop (no GPU) against the 
 | "What did the SNB decide on 24 September 2026, and what was CPI inflation in August?" | Macro (SNB) | A second agent with its own retrieval over the SNB monetary policy assessment and Quarterly Bulletin; same grade / generate / verify loop |
 | "How many clients do we have per risk profile?" | Portfolios | The LLM writes SQL, a read-only tool runs it, the answer is verified against the rows |
 | "Which funds does Alice Brunner hold and what are their ongoing costs?" | Both | SQL first, then a self-contained KID question for the instruments that have a KID; instruments without one are reported as such |
-| "Which clients hold the fund with the lowest ongoing costs?" | KIDs first, then portfolios | The KID agent returns the cost of every fund, the SQL step filters clients by the funds that qualify (implemented; evaluation pending) |
+| "Which clients hold the fund with the lowest ongoing costs?" | KIDs first, then portfolios | The KID agent returns the cost of every fund, the model picks the qualifying funds (validated against the database in code), and SQL finds the clients holding them |
 | "Should I sell Alice Brunner's Vanguard position?" | Refused | A rule-based guard refuses before any LLM call |
 | "What is the weather in Nyon?" | Out of scope | Politely declined |
 
@@ -125,12 +125,13 @@ a pass until I checked the labels against the text. The one remaining dev miss i
 | | Routing | Answer correct |
 |---|---|---|
 | First run with the macro route | 45/45 | 42/45 (43/45 after the r35 item was corrected, see below) |
+| Re-run of the two multi-hop items after adding the KID-first route | 45/45 | 44/45 |
 
-The three misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the cheapest
-fund"; one is a safe refusal, one a silently truncated client list), which a KID-first route would fix, and one
-"current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
+The three first-run misses: two multi-hop questions that need KID facts before the SQL (for example "clients holding the
+cheapest fund"; one was a safe refusal, the other a list with wrong and missing clients), and one "current EUR/CHF rate" item whose expectation (decline) predates the macro route; it now accepts either the dated
 bulletin figure or a decline (the router flips between the two across runs, and my first corrected check matched the
-decline message by accident, so I tightened it). On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
+decline message by accident, so I tightened it). The new KID-first route fixed one multi-hop item on its first run (r26) and
+exposed a SQL-filter and list-completeness error on the other (r27); a fix is implemented and awaits a re-run. On the original 40 questions, an earlier run with Gemini 3.1 Flash Lite scored 34/40 on the first
 run and 39/40 after fixing causes it exposed: a shared SQL-visibility bug, a rounding rule, and a confident wrong answer to a ranking
 question that now becomes a refusal. Refusal of investment advice 5/5, prompt-injection items 3/3, database unchanged.
 The router questions were used to fix problems, so these are development-set numbers.
@@ -230,7 +231,7 @@ src/wealthai/
 app/             Streamlit front-end (talks to the API only)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 scripts/         ingestion, evaluation, golden-set builders, CLI entry points
-tests/           134 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
+tests/           137 tests: SQL safety, router and agent control flow, ingestion, retrieval, evaluation checks, API, UI (no LLM calls)
 data/golden/     development (55), blind (52), holdout (14), router (45), macro (52) and macro holdout (18) sets
 docs/            results log and agent graphs
 ```
@@ -245,7 +246,7 @@ docs/            results log and agent graphs
 - [x] Macro source (two SNB publications) and a `macro` route, with a held-out set
 - [ ] Clean full run of the macro development set with one agent version; repeated runs for variance
 - [ ] A test that feeds the verification step deliberately wrong answers
-- [x] KID-first route for questions that need KID facts before the SQL (implemented, 4 control-flow tests; not yet evaluated on r26/r27)
+- [x] KID-first route for questions that need KID facts before the SQL (r26 passes, r27 failed on the first run; a fix is implemented and pending a re-run)
 - [ ] Larger KID library, including Swiss-domiciled products
 - [x] Dockerfile and docker-compose, built and smoke-tested in CI
 - [ ] Deployment notes for AWS or GCP

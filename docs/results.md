@@ -333,12 +333,23 @@ First run after adding the route:
 Database unchanged (25 clients, 138 holdings).
 
 - **r26, r27 (multi-hop, known limitation).** "Which clients hold the fund with the lowest ongoing costs" needs KID facts
-  before the SQL. r26 says the data does not allow that conclusion (safe); r27 lists the clients of the funds above
-  0.15% but is missing one client, probably because its query ends with `LIMIT 50` over 138 holdings. A KID-first route
-  is the planned fix.
-  **Update (2026-10-20):** the KID-first route (`kid_first`) is now implemented: a generated question asks the KID agent for the
-  fact of all five funds, and the SQL step receives that answer and filters clients by the qualifying instruments. It is covered by
-  four control-flow tests with scripted LLM calls; it has **not** been run against r26/r27 yet, so there is no result to report.
+  before the SQL. r26 says the data does not allow that conclusion (safe); r27 lists clients of the funds above
+  0.15% but is missing one client (I first suspected a `LIMIT 50` truncation; that was wrong, see the update below). A KID-first
+  route was the planned fix.
+  **Update (2026-10-20):** a KID-first route (`kid_first`) was added: a generated question asks the KID agent for the fact of
+  all five funds, and the SQL step receives that answer and filters clients by the qualifying instruments. First run on
+  these two items (`gemini-flash-lite-latest`, one run, route chosen correctly both times): **r26 passed, r27 failed**, so the
+  multi-hop category is 1/2 and the router total 44/45 on that run.
+  Diagnosis of r27 against the database: the SQL filtered with `LIKE '%MSCI EM%' OR '%World%'`, which also matches the
+  Vanguard All-World (0.14%) and Xtrackers (0.12%) funds that do not qualify, and the answer then listed 18 of the 22
+  clients returned, dropping three correct ones (Alice Dubois, Elias Fischer, Julia Keller) and adding clients who hold only
+  non-qualifying funds. The verifier did not catch either error, because it checks that listed facts are supported, not that a
+  list is complete or restricted to the qualifying funds.
+  Changes made after seeing this (so r27 is now a development item): (1) a `select_instruments` step in which the model
+  picks the qualifying funds from the KID answer, validated in code against the instruments table (invented names are dropped; an
+  empty selection abstains), and the SQL step must filter with `instruments.isin IN (...)`; (2) the compose prompt must name
+  every client in the result and the verifier rejects answers that omit or add entities. These changes are covered by
+  seven control-flow tests with scripted model calls and have **not** been run against the model yet.
 - **r35 (current EUR/CHF rate).** The item was written to require a decline, before the macro route existed. The system
   now answers with the dated bulletin figure ("in mid-September one euro was worth CHF 0.94"), which is faithful.
   I relabelled it after seeing this result, so 42/45 is the as-run score. The macro prompt also now says that a "current"
