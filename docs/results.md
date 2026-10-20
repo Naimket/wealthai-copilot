@@ -286,9 +286,20 @@ model is the cleaner figure. Latency 21 s per question.
 | First run, original agent | `gemini-flash-lite-latest` | 44/50 with the original labels, **42/50** with the corrected ones |
 | Agent after the first round of fixes, full run | Gemini 3.1 Flash Lite (exploratory) | 48/52 |
 | Failed or changed items re-run with the final agent | `gemini-flash-lite-latest` | 51/52 (composite, see below) |
+| **Full run, one agent version** (run 2, 2026-10-20, free tier, new key; mean 22.8 s per question) | `gemini-flash-lite-latest` | **50/52** |
 
 The 51/52 is a composite: the 35 answers that were not re-run come from earlier agent versions, so it is not a clean
-single-version number. A full single-version run on the 3.5 model is still to do.
+single-version number. The full single-version run on the 3.5 model is run 2: 50/52 (factual 35/36, hard 3/3,
+comparative 2/3, unanswerable 10/10; routing 51/52). Use this one, with the caveat that the set was used to fix the agent.
+
+**The two misses of run 2.**
+- **m08** (badly worded "which price index" question): this time the router sent it to `out_of_scope` in 4 s, so the
+  failure is at routing rather than in the grader as before. Same question, different failing step on different runs.
+- **m39** ("Was the unemployment rate higher in the euro area or in the United States?"): routed correctly; the second search
+  found both figures (by the grader's own reason, euro area for July and US for August), but the grader rejected both
+  searches because the periods differ, and the agent abstained. The grader asks for aligned periods that the question does not require. It passed in the earlier
+  composite run and failed in the first run, so it is unstable on this item. Not tuned for: a grader change would be a
+  fix designed on a dev item, and it would need a new held-out run to check that it does not loosen the abstention traps.
 
 ### What the first run found
 

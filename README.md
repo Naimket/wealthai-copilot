@@ -112,12 +112,12 @@ correct only if it was routed to `macro` and the answer contains the expected fa
 | Held-out, 18 questions (14 answerable, 4 traps), first run | Gemini 3.1 Flash Lite | 17/18 |
 | Same set after the one routing fix it exposed | `gemini-flash-lite-latest` | 18/18 |
 | Development set, 52 questions, first run (original agent, corrected labels) | `gemini-flash-lite-latest` | 42/50 |
-| Development set after fixes | `gemini-flash-lite-latest` | 51/52 (composite of agent versions; a clean full run is pending) |
+| Development set after fixes, **full run with one agent version** (run 2, 22.8 s per question) | `gemini-flash-lite-latest` | **50/52** (36 factual 35, 3 hard 3, 3 comparative 2, 10 traps 10) |
 
 Retrieval on the macro text: hybrid (dense + BM25) reached 100% hit@5; the cross-encoder reranker, which was decisive on the
 KIDs, did not help here (97.3%), so the macro agent does not use it. The first run also exposed a mistake of mine: two
 questions I had labelled "not in the documents" were answered by the bulletin, and the system's wrong decline counted as
-a pass until I checked the labels against the text. The one remaining dev miss is a badly worded question. Details in
+a pass until I checked the labels against the text. The two misses of the clean run: m08, a badly worded question (the router declined it this time), and m39 (unemployment in the euro area vs the US), where the grader rejected both searches because the two figures are for adjacent months, a strictness I did not tune for. The set is a development set, so 50/52 is not a generalisation claim. Details in
 [docs/results.md](docs/results.md).
 
 **Multi-source router** (45 questions, `gemini-flash-lite-latest`; ground truth computed by SQL, no LLM judge):
